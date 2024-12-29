@@ -5,71 +5,9 @@
 #include <stdio.h>
 #include <memory.h>
 #include <stdlib.h>
-#include <float.h>
 #include <limits.h>
-#include <time.h>
 
-#define POINTS 128
-#define S 28.0
-#define MOMENTUM_PARAM 0.8
-#define BASE_MEM_SIZE 100
-#define MARIO_HITBOX_SIZE 100
-
-// TODO: SIMD
-struct path {
-    double x[POINTS], z[POINTS];
-    double xp[POINTS-1], zp[POINTS-1];
-    double diff_eps[POINTS-1];
-};
-
-struct momentum {
-    double x[POINTS-2], z[POINTS-2];
-};
-
-struct hitbox {
-    double x, z, radius;
-};
-
-struct hitboxes {
-    int num_hb;
-    struct hitbox hb[];
-};
-
-struct memory {
-    int size, next;
-    double *x, *z;
-};
-
-void array_copy(double *dst, double *src, int length) {
-    memcpy(dst, src, length * sizeof(double));
-}
-
-void derivative(double *dst, double *src, int srclen) {
-    for (int i = 0; i < srclen-1; i++) {
-        dst[i] = (src[i+1] - src[i]) * POINTS;
-    }
-}
-
-// lerp between start and end on [start_i..end_i] (inclusive)
-void lerp(double *dst, double start, double end, int start_i, int end_i) {
-    double step = (end - start) / (end_i - start_i);
-    for (int i = 0; i <= end_i - start_i; i++) {
-        dst[start_i + i] = start + step * i;
-    }
-}
-
-float opt_numdiff_eps(double x, double xp, double z, double zp) {
-    return sqrt(DBL_EPSILON) * (fabs(x) + fabs(xp) + fabs(z) + fabs(zp) + sqrt(DBL_EPSILON));
-}
-
-void recompute_dependent(struct path *p) {
-    derivative(p->xp, p->x, POINTS);
-    derivative(p->zp, p->z, POINTS);
-
-    for (int i = 1; i < POINTS; i++) {
-        p->diff_eps[i-1] = opt_numdiff_eps(p->x[i], p->xp[i-1], p->z[i], p->zp[i-1]);
-    }
-}
+#include "util.h"
 
 double prescribed_angle(double x, double z, double xp, double zp) {
     double norm = hypot(x, z);
@@ -168,39 +106,6 @@ void push_out_of_hitboxes(
     }
 }
 
-void remove_equal_points(struct path *p) {
-    int last_uneq_i = 0;
-    double last_uneq_x = p->x[0],
-           last_uneq_z = p->z[0];
-    for (int i = 1; i < POINTS; i++) {
-        double x = p->x[i], z = p->z[i];
-        if (x == last_uneq_x && z == last_uneq_z && i < POINTS-1) {
-            // do lerp step unconditionally if last index has been reached
-            // in case the array ends with a streak of equal values
-            continue;
-        }
-
-        if (i - last_uneq_i > 1) {
-            int len = i - last_uneq_i;
-            for (int j = 1; j < len-1; j++) {
-                double fac = ((double) j) / len;
-                p->x[last_uneq_i + j] = last_uneq_x * fac + x * (1-fac);
-                p->z[last_uneq_i + j] = last_uneq_z * fac + z * (1-fac);
-            }
-        }
-
-        last_uneq_x = x;
-        last_uneq_z = z;
-        last_uneq_i = i; 
-    }
-}
-
-void compute_arclength(struct path *p, double *arclengths, double *tot_arclength) {
-    for (int i = 0; i < POINTS-1; i++) {
-        *tot_arclength += (arclengths[i] = hypot(p->x[i+1] - p->x[i], p->z[i+1] - p->z[i]));
-    }
-}
-
 void descend_and_renormalize(
     struct path *p,
     struct hitboxes *hb,
@@ -248,7 +153,9 @@ void descend_and_renormalize(
     double arclength[POINTS-1],
            tot_arclength = 0.0;
 
-    compute_arclength(p, arclength, &tot_arclength);
+    for (int i = 0; i < POINTS-1; i++) {
+        tot_arclength += (arclength[i] = hypot(p->x[i+1] - p->x[i], p->z[i+1] - p->z[i]));
+    }
 
     double renorm_x[POINTS], renorm_z[POINTS];
     double arclength_so_far = 0.0f;
