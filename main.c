@@ -9,7 +9,11 @@
 
 #include "util.h"
 
-double prescribed_angle(double x, double z, double xp, double zp) {
+#define MAX_YAW_SPEED 75 * M_PI / 128
+#define UNUSED(...) (void)(__VA_ARGS__)
+
+// the angle that mario should have to follow the path
+double theta_star(double x, double xp, double z, double zp) {
     double norm = hypot(x, z);
     double yaw_offset = - M_PI * 250 / (norm + 1000);
     double sin_o = sin(yaw_offset),
@@ -20,12 +24,13 @@ double prescribed_angle(double x, double z, double xp, double zp) {
     double a = S * zp,
         b = -S * xp,
         c = current_x * zp - current_z * xp;
-    double theta_star = 2 * atan((b + sqrt(a*a + b*b - c*c)) / (a - c));
-    return theta_star;
+    return 2 * atan((b + sqrt(a*a + b*b - c*c)) / (a - c));
 }
 
-// time taken a.k.a the integrand a.k.a the lagrangian
-double time_integrand(double x, double xp, double z, double zp) {
+double lagrangian(
+    double x, double xp,
+    double z, double zp
+) {
     double norm = hypot(x, z);
     double yaw_offset = - M_PI * 250 / (norm + 1000);
     double sin_o = sin(yaw_offset),
@@ -37,13 +42,8 @@ double time_integrand(double x, double xp, double z, double zp) {
           b = -S * xp,
           c = current_x * zp - current_z * xp;
     double inner = (b + sqrt(a*a + b*b - c*c)) / (a - c);
-    double cos_theta_star = 2 / (1 + inner * inner) - 1,
-          sin_theta_star = 2 * inner / (1 + inner * inner);
-    double i1 = hypot(xp, zp);
-    double i2 = S * cos_theta_star + current_x;
-    double i3 = S * sin_theta_star + current_z;
-    double i4 = hypot(i2, i3);
-    return i1 / i4;
+    double cos_theta_star = 2 / (1 + inner * inner) - 1;
+    return fabs(xp / (S * cos_theta_star + current_x));
 }
 
 double total_time(struct path *p) {
@@ -51,8 +51,9 @@ double total_time(struct path *p) {
     double lengths[POINTS-1];
 
     for (int i = 1; i < POINTS; i++) {
-        total += lengths[i-1] = time_integrand(
-            p->x[i], p->xp[i-1], p->z[i], p->zp[i-1]
+        total += lengths[i-1] = lagrangian(
+            p->x[i], p->xp[i-1],
+            p->z[i], p->zp[i-1]
         );
     }
 
@@ -61,29 +62,29 @@ double total_time(struct path *p) {
 
 double partial_x(double x, double xp, double z, double zp, double diff_eps) {
     return (
-        time_integrand(x + diff_eps, xp, z, zp)
-        - time_integrand(x - diff_eps, xp, z, zp)
+        lagrangian(x + diff_eps, xp, z, zp)
+        - lagrangian(x - diff_eps, xp, z, zp)
     ) / (2 * diff_eps);
 }
 
 double partial_xp(double x, double xp, double z, double zp, double diff_eps) {
     return (
-        time_integrand(x, xp + diff_eps, z, zp)
-        - time_integrand(x, xp - diff_eps, z, zp)
+        lagrangian(x, xp + diff_eps, z, zp)
+        - lagrangian(x, xp - diff_eps, z, zp)
     ) / (2 * diff_eps);
 }
 
 double partial_z(double x, double xp, double z, double zp, double diff_eps) {
     return (
-        time_integrand(x, xp, z + diff_eps, zp)
-        - time_integrand(x, xp, z - diff_eps, zp)
+        lagrangian(x, xp, z + diff_eps, zp)
+        - lagrangian(x, xp, z - diff_eps, zp)
     ) / (2 * diff_eps);
 }
 
 double partial_zp(double x, double xp, double z, double zp, double diff_eps) {
     return (
-        time_integrand(x, xp, z, zp + diff_eps)
-        - time_integrand(x, xp, z, zp - diff_eps)
+        lagrangian(x, xp, z, zp + diff_eps)
+        - lagrangian(x, xp, z, zp - diff_eps)
     ) / (2 * diff_eps);
 }
 
@@ -147,9 +148,9 @@ void descend_and_renormalize(
     }
 
     push_out_of_hitboxes(p, hb);
-    // remove_equal_points(p);
 
-    // compute derivative and arclength
+    // arclength renormalization, prevents wonky convergence behavior
+
     double arclength[POINTS-1],
            tot_arclength = 0.0;
 
@@ -186,51 +187,6 @@ void descend_and_renormalize(
     array_copy(p->x, renorm_x, POINTS);
     array_copy(p->z, renorm_z, POINTS);
     recompute_dependent(p);
-}
-
-void make_copy(struct path *dst, struct path *src) {
-    array_copy(dst->x, src->x, POINTS);
-    array_copy(dst->z, src->z, POINTS);
-    array_copy(dst->xp, src->xp, POINTS-1);
-    array_copy(dst->zp, src->zp, POINTS-1);
-    array_copy(dst->diff_eps, src->diff_eps, POINTS-1);
-}
-
-struct memory init_memory(int initial_size) {
-    struct memory mem = {
-        initial_size,
-        0,
-        malloc(initial_size * POINTS * sizeof(double)),
-        malloc(initial_size * POINTS * sizeof(double))
-    };
-
-    if (mem.x == NULL || mem.z == NULL) {
-        puts("Could not allocate arrays for memory!");
-        exit(1);
-    }
-    
-    return mem;
-}
-
-void store_into_memory(struct path *p, struct memory *mem) {
-    array_copy(mem->x + POINTS * mem->next, p->x, POINTS);
-    array_copy(mem->z + POINTS * mem->next, p->z, POINTS);
-
-    if (++mem->next >= mem->size) {
-        mem->size += 100;
-        printf("Memory exceeded, reallocing to %d\n", mem->size);
-        mem->x = realloc(mem->x, mem->size * POINTS * sizeof(double));
-        mem->z = realloc(mem->z, mem->size * POINTS * sizeof(double));
-        if (mem->x == NULL || mem->z == NULL) {
-            puts("Could not realloc!");
-            exit(1);
-        }
-    }
-}
-
-void free_mem(struct memory *mem) {
-    free(mem->x);
-    free(mem->z);
 }
 
 void optimize(
@@ -513,10 +469,10 @@ void compute_and_output_yaws(struct path *p) {
     double *yaws = malloc(len_renorm * sizeof(double));
 
     // now that we have proper step sizes, we can find out our prescribed yaws
-    yaws[0] = prescribed_angle(renorm_x[0], renorm_z[0], renorm_xp[0], renorm_zp[0]);
+    yaws[0] = theta_star(renorm_x[0], renorm_z[0], renorm_xp[0], renorm_zp[0]);
 
     for (int i = 1; i < len_renorm; i++) {
-        yaws[i] = prescribed_angle(renorm_x[i], renorm_z[i], renorm_xp[i-1], renorm_zp[i-1]);
+        yaws[i] = theta_star(renorm_x[i], renorm_z[i], renorm_xp[i-1], renorm_zp[i-1]);
     }
 
     output_yaws(len_renorm, renorm_x, renorm_z, yaws);

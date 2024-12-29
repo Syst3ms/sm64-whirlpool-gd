@@ -22,7 +22,7 @@ build: $(OBJS)
 	@$(CC) $(LFLAGS) -o $(EXEC) $(OBJS)
 
 $(BUILDDIR)/%.o: %.c
-	mkdir -p $(dir $@)
+	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ -c $<
 
 clean:
