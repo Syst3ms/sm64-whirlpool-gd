@@ -56,8 +56,6 @@ if __name__ == '__main__':
     plt.plot(Mx, Mz, 'r-')
     n = len(yaw_path)
     for i, (x, z, t) in enumerate(yaw_path):
-        if i%3:
-            continue
         plt.arrow(
             x, z,
             np.sin(t) * 300, np.cos(t) * 300,

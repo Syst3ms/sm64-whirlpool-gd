@@ -1,92 +1,17 @@
 #define _USE_MATH_DEFINES
 #define _POSIX_C_SOURCE 200809L
 
-#include <math.h>
-#include <stdio.h>
-#include <memory.h>
-#include <stdlib.h>
+#include <float.h>
 #include <limits.h>
+#include <math.h>
+#include <memory.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 #include "util.h"
+#include "math_funcs.h"
 
-#define MAX_YAW_SPEED 75 * M_PI / 128
-#define UNUSED(...) (void)(__VA_ARGS__)
-
-// the angle that mario should have to follow the path
-double theta_star(double x, double xp, double z, double zp) {
-    double norm = hypot(x, z);
-    double yaw_offset = - M_PI * 250 / (norm + 1000);
-    double sin_o = sin(yaw_offset),
-        cos_o = cos(yaw_offset),
-        fac = -20 * (1/norm - 1/2000.0f);
-    double current_x = fac * (cos_o * x + sin_o * z),
-        current_z = fac * (-sin_o * x + cos_o * z);
-    double a = S * zp,
-        b = -S * xp,
-        c = current_x * zp - current_z * xp;
-    return 2 * atan((b + sqrt(a*a + b*b - c*c)) / (a - c));
-}
-
-double lagrangian(
-    double x, double xp,
-    double z, double zp
-) {
-    double norm = hypot(x, z);
-    double yaw_offset = - M_PI * 250 / (norm + 1000);
-    double sin_o = sin(yaw_offset),
-          cos_o = cos(yaw_offset),
-          fac = -20 * (1/norm - 1/2000.0f);
-    double current_x = fac * (cos_o * x + sin_o * z),
-          current_z = fac * (-sin_o * x + cos_o * z);
-    double a = S * zp,
-          b = -S * xp,
-          c = current_x * zp - current_z * xp;
-    double inner = (b + sqrt(a*a + b*b - c*c)) / (a - c);
-    double cos_theta_star = 2 / (1 + inner * inner) - 1;
-    return fabs(xp / (S * cos_theta_star + current_x));
-}
-
-double total_time(struct path *p) {
-    double total = 0.0f;
-    double lengths[POINTS-1];
-
-    for (int i = 1; i < POINTS; i++) {
-        total += lengths[i-1] = lagrangian(
-            p->x[i], p->xp[i-1],
-            p->z[i], p->zp[i-1]
-        );
-    }
-
-    return total / POINTS;
-}
-
-double partial_x(double x, double xp, double z, double zp, double diff_eps) {
-    return (
-        lagrangian(x + diff_eps, xp, z, zp)
-        - lagrangian(x - diff_eps, xp, z, zp)
-    ) / (2 * diff_eps);
-}
-
-double partial_xp(double x, double xp, double z, double zp, double diff_eps) {
-    return (
-        lagrangian(x, xp + diff_eps, z, zp)
-        - lagrangian(x, xp - diff_eps, z, zp)
-    ) / (2 * diff_eps);
-}
-
-double partial_z(double x, double xp, double z, double zp, double diff_eps) {
-    return (
-        lagrangian(x, xp, z + diff_eps, zp)
-        - lagrangian(x, xp, z - diff_eps, zp)
-    ) / (2 * diff_eps);
-}
-
-double partial_zp(double x, double xp, double z, double zp, double diff_eps) {
-    return (
-        lagrangian(x, xp, z, zp + diff_eps)
-        - lagrangian(x, xp, z, zp - diff_eps)
-    ) / (2 * diff_eps);
-}
+#define S 28.0
 
 void push_out_of_hitboxes(
     struct path *p,
@@ -108,21 +33,25 @@ void push_out_of_hitboxes(
 }
 
 void descend_and_renormalize(
-    struct path *p,
+    struct data *d,
     struct hitboxes *hb,
     struct momentum *momentum,
     double eps
 ) {
     double x2[POINTS-1], z2[POINTS-1];
+    struct path *p = &d->p;
 
-    for (int i = 1; i < POINTS; i++) {
-        double x = p->x[i],
-               xp = p->xp[i-1], 
-               z = p->z[i], 
-               zp = p->zp[i-1],
-               diff_eps = p->diff_eps[i-1];
-        x2[i-1] = -partial_xp(x, xp, z, zp, diff_eps);
-        z2[i-1] = -partial_zp(x, xp, z, zp, diff_eps);
+    for (int i = 0; i < POINTS-1; i++) {
+        double x = p->x[i+1],
+               xp = d->xp[i], 
+               xpp = d->xpp[i],
+               z = p->z[i+1], 
+               zp = d->zp[i],
+               zpp = d->zpp[i],
+               theta = d->theta[i],
+               partial_theta = d->partial_theta[i];
+        x2[i] = -lagr_partial_xp(x, xp, xpp, z, zp, zpp, theta, partial_theta);
+        z2[i] = -lagr_partial_zp(x, xp, xpp, z, zp, zpp, theta, partial_theta);
     }
 
     double delta_x[POINTS-2], delta_z[POINTS-2];
@@ -131,15 +60,22 @@ void descend_and_renormalize(
 
     double max_delta_norm = 0.0f;
 
-    for (int i = 1; i < POINTS-1; i++) {
-        double x = p->x[i],
-               xp = p->xp[i-1], 
-               z = p->z[i], 
-               zp = p->zp[i-1],
-               diff_eps = p->diff_eps[i-1];
-        delta_x[i-1] += partial_x(x, xp, z, zp, diff_eps);
-        delta_z[i-1] += partial_z(x, xp, z, zp, diff_eps);
-        max_delta_norm = fmax(max_delta_norm, hypot(delta_x[i-1], delta_z[i-1]));
+    for (int i = 0; i < POINTS-2; i++) {
+        double x = p->x[i+1],
+               xp = d->xp[i],
+               xpp = d->xpp[i],
+               z = p->z[i+1], 
+               zp = d->zp[i],
+               zpp = d->zpp[i],
+               theta = d->theta[i],
+               partial_theta = d->partial_theta[i];
+        max_delta_norm = fmax(
+            max_delta_norm,
+            hypot(
+                delta_x[i] += lagr_partial_x(x, xp, xpp, z, zp, zpp, theta, partial_theta),
+                delta_z[i] += lagr_partial_z(x, xp, xpp, z, zp, zpp, theta, partial_theta)
+            )
+        );
     }
 
     for (int i = 1; i < POINTS-1; i++) {
@@ -186,38 +122,39 @@ void descend_and_renormalize(
     // update p
     array_copy(p->x, renorm_x, POINTS);
     array_copy(p->z, renorm_z, POINTS);
-    recompute_dependent(p);
+    recompute_dependent(d);
 }
 
 void optimize(
-    struct path *p,
+    struct data *d,
     struct hitboxes *active_hitboxes,
     double threshold,
     double min_diff,
     int max_iters
 ) {
-    struct path backup;
-    make_copy(&backup, p);
+    struct path *p = &d->p;
+    struct data backup;
+    make_copy(&backup, d);
 
     struct memory mem = init_memory(100);
 
-    double obj = total_time(p),
+    double obj = objective(d),
           prev_obj = obj,
           diff = HUGE_VAL,
           eps = 1.0;
     struct momentum momentum = {{0.0}, {0.0}};
     int iters = 0;
     while (eps >= threshold && iters <= max_iters && diff > min_diff) {
-        make_copy(&backup, p);
+        make_copy(&backup, d);
         if (iters % 100 == 0) {
-            store_into_memory(p, &mem);
+            store_into_memory(&d->p, &mem);
             printf("%d: %f\n", iters, obj);
         } 
         iters++;
 
-        descend_and_renormalize(p, active_hitboxes, &momentum, eps);
+        descend_and_renormalize(d, active_hitboxes, &momentum, eps);
 
-        obj = total_time(p);
+        obj = objective(d);
         diff = prev_obj - obj;
 
         if (diff < 0) { // worsening
@@ -228,20 +165,20 @@ void optimize(
                 momentum.x[i-1] = momentum.z[i-1] = 0;
             }
 
-            make_copy(p, &backup);
+            make_copy(d, &backup);
             diff = HUGE_VALF;
         } else {
             for (int i = 1; i < POINTS-1; i++) {
-                momentum.x[i-1] = p->x[i] - backup.x[i];
-                momentum.z[i-1] = p->z[i] - backup.z[i];
+                momentum.x[i-1] = p->x[i] - backup.p.x[i];
+                momentum.z[i-1] = p->z[i] - backup.p.z[i];
             }
-            make_copy(&backup, p);
+            make_copy(&backup, d);
             prev_obj = obj;
         }
     }
 
     if (prev_obj < obj) {
-        make_copy(p, &backup);
+        make_copy(d, &backup);
         obj = prev_obj;
     }
 
@@ -352,26 +289,21 @@ void find_resampled(
         return; 
     }
 
-    double lo = 0.0, hi = 1.0, cur;
-    const double eps = 1e-4;
-    // binary search
-    while (hi - lo > eps) {
-        cur = (lo + hi) / 2;
-        double dist = hypot(
-            (1 - cur) * x0 + cur * x1 - ref_x,
-            (1 - cur) * z0 + cur * z1 - ref_z
-        );
-        if (dist < target_length - eps) {
-            lo = cur;
-        } else if (dist > target_length + eps) {
-            hi = cur;
-        } else { // eps away
-            break;
-        }
+    double vx = x1 - x0, vz = z1 - z0, wx = x0 - ref_x, wz = z0 - ref_z;
+
+    double snv = vx * vx + vz * vz;
+    double dp = vx * wx + vz * wz;
+    double snw = wx * wx + wz * wz;
+
+    if (dp < 0) {
+        puts("Path segments went opposite ways, increase sample count");
+        exit(1);
     }
 
-    *res_x = (1 - cur) * x0 + cur * x1;
-    *res_z = (1 - cur) * z0 + cur * z1;  
+    double fac = (-dp + sqrt(dp * dp + snv * (target_length * target_length - snw))) / snv;
+
+    *res_x = (1 - fac) * x0 + fac * x1;
+    *res_z = (1 - fac) * z0 + fac * z1;  
 }
 
 void output_yaws(
@@ -394,6 +326,20 @@ void output_yaws(
     }
 
     fclose(f);
+}
+
+void inc_and_realloc_if_necessary(int *i, int *arr_siz, double **renorm_x, double **renorm_z) {
+    (*i)++;
+
+    if (*i == *arr_siz) {
+        *arr_siz += POINTS;
+        *renorm_x = realloc(*renorm_x, *arr_siz * sizeof(double));
+        *renorm_z = realloc(*renorm_z, *arr_siz * sizeof(double));
+        if (renorm_x == NULL || renorm_z == NULL) {
+            puts("Couldn't reallocate renorm arrays!");
+            exit(1);
+        }
+    }
 }
 
 void compute_and_output_yaws(struct path *p) {
@@ -427,33 +373,14 @@ void compute_and_output_yaws(struct path *p) {
                 S,
                 &renorm_x[i+1], &renorm_z[i+1]
             );
-            i++;
 
-            if (i == arr_siz) {
-                arr_siz += POINTS;
-                renorm_x = realloc(renorm_x, arr_siz * sizeof(double));
-                renorm_z = realloc(renorm_z, arr_siz * sizeof(double));
-                if (renorm_x == NULL || renorm_z == NULL) {
-                    puts("Couldn't reallocate renorm arrays!");
-                    exit(1);
-                }
-            }
+            inc_and_realloc_if_necessary(&i, &arr_siz, &renorm_x, &renorm_z);
         }
     }
 
     if (cum_arclength[POINTS-1] > i * S) {
         // add one last short segment
-        i++;
-
-        if (i == arr_siz) {
-            arr_siz++;
-            renorm_x = realloc(renorm_x, arr_siz * sizeof(double));
-            renorm_z = realloc(renorm_z, arr_siz * sizeof(double));
-            if (renorm_x == NULL || renorm_z == NULL) {
-                puts("Couldn't reallocate renorm arrays!");
-                exit(1);
-            }
-        }
+        inc_and_realloc_if_necessary(&i, &arr_siz, &renorm_x, &renorm_z);
 
         renorm_x[i] = p->x[POINTS-1];
         renorm_z[i] = p->z[POINTS-1];
@@ -469,10 +396,10 @@ void compute_and_output_yaws(struct path *p) {
     double *yaws = malloc(len_renorm * sizeof(double));
 
     // now that we have proper step sizes, we can find out our prescribed yaws
-    yaws[0] = theta_star(renorm_x[0], renorm_z[0], renorm_xp[0], renorm_zp[0]);
+    yaws[0] = theta(renorm_x[0], renorm_z[0], renorm_xp[0], renorm_zp[0]);
 
     for (int i = 1; i < len_renorm; i++) {
-        yaws[i] = theta_star(renorm_x[i], renorm_z[i], renorm_xp[i-1], renorm_zp[i-1]);
+        yaws[i] = theta(renorm_x[i], renorm_z[i], renorm_xp[i-1], renorm_zp[i-1]);
     }
 
     output_yaws(len_renorm, renorm_x, renorm_z, yaws);
@@ -518,11 +445,15 @@ int main(void) {
     memcpy(hitboxes->hb, hb, sizeof(hb));
 
     push_out_of_hitboxes(&p, hitboxes);
-    recompute_dependent(&p);
 
-    optimize(&p, hitboxes, 1e-5f, 1e-9f, INT_MAX);
+    struct data d;
+    d.p = p;
 
-    compute_and_output_yaws(&p);
+    recompute_dependent(&d);
+
+    optimize(&d, hitboxes, 1e-5f, 1e-9f, INT_MAX);
+
+    compute_and_output_yaws(&d.p);
 
     free(hitboxes);
 

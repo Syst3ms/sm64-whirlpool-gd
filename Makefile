@@ -1,7 +1,7 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -Werror -O2 -MMD -MP
 LFLAGS =
-SRCS = main.c util.c
+SRCS = main.c util.c math_funcs.c
 EXEC = whirlpool_gd
 BUILDDIR = ./build
 
@@ -19,7 +19,7 @@ run: build
 	@./$(EXEC).exe
 
 build: $(OBJS)
-	@$(CC) $(LFLAGS) -o $(EXEC) $(OBJS)
+	$(CC) $(LFLAGS) -o $(EXEC) $(OBJS)
 
 $(BUILDDIR)/%.o: %.c
 	@mkdir -p $(dir $@)
