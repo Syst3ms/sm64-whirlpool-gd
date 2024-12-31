@@ -79,8 +79,6 @@ void descend_and_renormalize(
         );
     }
 
-    max_delta_norm = fmax(1, max_delta_norm);
-
     for (int i = 1; i < POINTS-1; i++) {
         p->x[i] += MOMENTUM_PARAM * momentum->x[i-1] - delta_x[i-1] / max_delta_norm * eps;
         p->z[i] += MOMENTUM_PARAM * momentum->z[i-1] - delta_z[i-1] / max_delta_norm * eps; 
@@ -435,9 +433,9 @@ int main(void) {
      * Star: 1274/-1502
      */
     // Direct/between whirlpool and chest 3
-    struct path p = initialize_path(1374, 948, -1326, -1202, 150);
+    // struct path p = initialize_path(1374, 948, -1326, -1202, 150);
     // Right of chest 3 
-    // struct path p = initialize_path_inter(1374, 948, 1000, -1000, -1326, -1202, 150);
+    struct path p = initialize_path_inter(1374, 948, 1000, -1000, -1326, -1202, 150);
     // Left of whirlpool
     // struct path p = initialize_path_inter(1374, 948, -400, 400, -1326, -1202, 150);
 

@@ -8,7 +8,7 @@
 
 #define S 28.0
 #define D_EPS cbrt(DBL_EPSILON) 
-#define PENALTY_FACTOR 0.001
+#define PENALTY_FACTOR 10
 #define MAX_YAW_SPEED (75*M_PI/128)
 
 // the angle that mario should have to follow the path
@@ -88,6 +88,12 @@ double theta_p(
            zpp * theta_partial_zp(x, xp, z, zp);
 }
 
+// return 0 if t < mx, (t-mx)^2 otherwise
+double soft_excess(double t, double mx) {
+    double exc = fmax(t - mx, 0);
+    return exc * exc;
+}
+
 // a function f(x,x',z,z',u) such that the lagrangian is f(x,x',z,z',θ'(x,x',z,z'))
 double lagr_intermediate(double x, double xp, double z, double zp, double u) {
     double norm = hypot(x, z);
@@ -100,16 +106,16 @@ double lagr_intermediate(double x, double xp, double z, double zp, double u) {
     double a = (whirl_x * zp - whirl_z * xp) / S,
            b = xp * xp + zp * zp;
     double sin_theta = (xp * sqrt(b - a * a) - a * zp) / b;
-    double time_integrand = fabs(xp / (S * sin_theta + whirl_x)) / (POINTS-1);
-    double penalty_term = fmax(0, (fabs(u) / time_integrand) / MAX_YAW_SPEED - 1);
+    double time_integrand = fabs(xp / (S * sin_theta + whirl_x));
+    double penalty_term = soft_excess(fabs(u) / time_integrand, MAX_YAW_SPEED);
     return time_integrand + PENALTY_FACTOR * penalty_term;
 }
 
 double lagrangian_with_precomputed(
     double xp, double x_current, double theta, double theta_p
 ) {
-    double time_integrand = fabs(xp / (S * sin(theta) + x_current)) / (POINTS-1);
-    double penalty_term = fmax(0, (fabs(theta_p) / time_integrand) / MAX_YAW_SPEED - 1);
+    double time_integrand = fabs(xp / (S * sin(theta) + x_current));
+    double penalty_term = soft_excess(fabs(theta_p) / time_integrand, MAX_YAW_SPEED);
     return time_integrand + PENALTY_FACTOR * penalty_term;
 }
 
@@ -204,7 +210,7 @@ double objective(struct data *d) {
     double total = 0.0f;
 
     for (int i = 0; i < POINTS-1; i++) {
-        total += d->lagrangian[i];
+        total += d->lagrangian[i] / (POINTS-1);
     }
 
     return total;
