@@ -5,10 +5,6 @@
         double theta, double partial_theta\
     )
 
-double lagrangian_with_precomputed(
-    double x, double xp, double xpp, double z, double zp, double zpp,
-    double x_current, double theta
-);
 LAGR_PARTIAL(x);
 LAGR_PARTIAL(xp);
 LAGR_PARTIAL(z);

@@ -12,6 +12,7 @@
 #include "math_funcs.h"
 
 #define S 28.0
+#define EPS_INCREASE_INTERVAL 2000
 
 void push_out_of_hitboxes(
     struct path *p,
@@ -48,10 +49,10 @@ void descend_and_renormalize(
                z = p->z[i+1], 
                zp = d->zp[i],
                zpp = d->zpp[i],
-               theta = d->theta[i],
+               theta_p = d->theta_p[i],
                partial_theta = d->partial_theta[i];
-        x2[i] = -lagr_partial_xp(x, xp, xpp, z, zp, zpp, theta, partial_theta);
-        z2[i] = -lagr_partial_zp(x, xp, xpp, z, zp, zpp, theta, partial_theta);
+        x2[i] = -lagr_partial_xp(x, xp, xpp, z, zp, zpp, theta_p, partial_theta);
+        z2[i] = -lagr_partial_zp(x, xp, xpp, z, zp, zpp, theta_p, partial_theta);
     }
 
     double delta_x[POINTS-2], delta_z[POINTS-2];
@@ -67,16 +68,18 @@ void descend_and_renormalize(
                z = p->z[i+1], 
                zp = d->zp[i],
                zpp = d->zpp[i],
-               theta = d->theta[i],
+               theta_p = d->theta_p[i],
                partial_theta = d->partial_theta[i];
         max_delta_norm = fmax(
             max_delta_norm,
             hypot(
-                delta_x[i] += lagr_partial_x(x, xp, xpp, z, zp, zpp, theta, partial_theta),
-                delta_z[i] += lagr_partial_z(x, xp, xpp, z, zp, zpp, theta, partial_theta)
+                delta_x[i] += lagr_partial_x(x, xp, xpp, z, zp, zpp, theta_p, partial_theta),
+                delta_z[i] += lagr_partial_z(x, xp, xpp, z, zp, zpp, theta_p, partial_theta)
             )
         );
     }
+
+    max_delta_norm = fmax(1, max_delta_norm);
 
     for (int i = 1; i < POINTS-1; i++) {
         p->x[i] += MOMENTUM_PARAM * momentum->x[i-1] - delta_x[i-1] / max_delta_norm * eps;
@@ -144,11 +147,11 @@ void optimize(
           eps = 1.0;
     struct momentum momentum = {{0.0}, {0.0}};
     int iters = 0;
+    int streak = 0;
     while (eps >= threshold && iters <= max_iters && diff > min_diff) {
-        make_copy(&backup, d);
         if (iters % 100 == 0) {
-            store_into_memory(&d->p, &mem);
             printf("%d: %f\n", iters, obj);
+            store_into_memory(&d->p, &mem);
         } 
         iters++;
 
@@ -158,6 +161,7 @@ void optimize(
         diff = prev_obj - obj;
 
         if (diff < 0) { // worsening
+            streak = 0;
             eps /= 2;
             printf("eps = %f\n", eps);
 
@@ -168,6 +172,12 @@ void optimize(
             make_copy(d, &backup);
             diff = HUGE_VALF;
         } else {
+            streak++;
+            if (streak % EPS_INCREASE_INTERVAL == 0) {
+                eps *= 2;
+                printf("eps = %f\n", eps);
+            }
+
             for (int i = 1; i < POINTS-1; i++) {
                 momentum.x[i-1] = p->x[i] - backup.p.x[i];
                 momentum.z[i-1] = p->z[i] - backup.p.z[i];
@@ -306,13 +316,13 @@ void find_resampled(
     *res_z = (1 - fac) * z0 + fac * z1;  
 }
 
-void output_yaws(
+void output_debug(
     int length,
     double *renorm_x,
     double *renorm_z,
     double *yaws
 ) {
-    FILE *f = fopen("yaws.txt", "w");
+    FILE *f = fopen("debug.txt", "w");
 
     unsigned short prev_au;
     for (int i = 0; i < length; i++) {
@@ -320,7 +330,12 @@ void output_yaws(
         if (i == 0) {
             fprintf(f, "%f,%f,%f,%d\n", renorm_x[i], renorm_z[i], yaws[i], cur);
         } else {
-            fprintf(f, "%f,%f,%f,%d,%d\n", renorm_x[i], renorm_z[i], yaws[i], cur, cur - prev_au);
+            short diff = cur - prev_au;
+            fprintf(
+                f, "%f,%f,%f,%d,%d%s\n",
+                renorm_x[i], renorm_z[i], yaws[i], cur, diff,
+                abs(diff) > 640 ? "!" : ""
+            );
         }
         prev_au = cur;
     }
@@ -342,7 +357,7 @@ void inc_and_realloc_if_necessary(int *i, int *arr_siz, double **renorm_x, doubl
     }
 }
 
-void compute_and_output_yaws(struct path *p) {
+void compute_and_output_debug(struct path *p) {
     double cum_arclength[POINTS],
            tot_arclength = 0.0;
 
@@ -396,13 +411,13 @@ void compute_and_output_yaws(struct path *p) {
     double *yaws = malloc(len_renorm * sizeof(double));
 
     // now that we have proper step sizes, we can find out our prescribed yaws
-    yaws[0] = theta(renorm_x[0], renorm_z[0], renorm_xp[0], renorm_zp[0]);
+    yaws[0] = theta(renorm_x[0], renorm_xp[0], renorm_z[0], renorm_zp[0]);
 
     for (int i = 1; i < len_renorm; i++) {
-        yaws[i] = theta(renorm_x[i], renorm_z[i], renorm_xp[i-1], renorm_zp[i-1]);
+        yaws[i] = theta(renorm_x[i], renorm_xp[i-1], renorm_z[i], renorm_zp[i-1]);
     }
-
-    output_yaws(len_renorm, renorm_x, renorm_z, yaws);
+ 
+    output_debug(len_renorm, renorm_x, renorm_z, yaws);
 
     free(yaws);
     free(renorm_x);
@@ -453,7 +468,7 @@ int main(void) {
 
     optimize(&d, hitboxes, 1e-5f, 1e-9f, INT_MAX);
 
-    compute_and_output_yaws(&d.p);
+    compute_and_output_debug(&d.p);
 
     free(hitboxes);
 

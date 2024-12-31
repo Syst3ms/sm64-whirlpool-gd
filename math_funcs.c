@@ -8,8 +8,8 @@
 
 #define S 28.0
 #define D_EPS cbrt(DBL_EPSILON) 
-#define PENALTY_FACTOR 100000
-#define MAX_YAW_SPEED 75 * M_PI / 128
+#define PENALTY_FACTOR 0.001
+#define MAX_YAW_SPEED (75*M_PI/128)
 
 // the angle that mario should have to follow the path
 double theta(double x, double xp, double z, double zp) {
@@ -18,12 +18,11 @@ double theta(double x, double xp, double z, double zp) {
     double sin_o = sin(yaw_offset),
         cos_o = cos(yaw_offset),
         fac = -20 * (1/norm - 1/2000.0f);
-    double current_x = fac * (cos_o * x + sin_o * z),
-        current_z = fac * (-sin_o * x + cos_o * z);
-    double a = S * zp,
-        b = -S * xp,
-        c = current_x * zp - current_z * xp;
-    return 2*atan((b + sqrt(a*a + b*b - c*c)) / (a - c));
+    double whirl_x = fac * (cos_o * x + sin_o * z),
+           whirl_z = fac * (-sin_o * x + cos_o * z);
+    double speed_norm = hypot(xp, zp),
+           det = whirl_x * zp - whirl_z * xp;
+    return acos(det / (S * speed_norm)) - atan2(zp, xp);
 }
 
 void compute_theta_and_current(
@@ -35,14 +34,13 @@ void compute_theta_and_current(
     double sin_o = sin(yaw_offset),
         cos_o = cos(yaw_offset),
         fac = -20 * (1/norm - 1/2000.0f);
-    double x_cur = fac * (cos_o * x + sin_o * z),
-           z_cur = fac * (-sin_o * x + cos_o * z);
-    double a = S * zp,
-        b = -S * xp,
-        c = x_cur * zp - z_cur * xp;
+    double whirl_x = fac * (cos_o * x + sin_o * z),
+           whirl_z = fac * (-sin_o * x + cos_o * z);
+    double speed_norm = hypot(xp, zp),
+           det = whirl_x * zp - whirl_z * xp;
 
-    *theta = 2*atan((b + sqrt(a*a + b*b - c*c)) / (a - c));
-    *x_current = x_cur;
+    *theta = acos(det / (S * speed_norm)) - atan2(zp, xp);
+    *x_current = whirl_x;
 }
 
 double theta_partial_x(
@@ -90,32 +88,28 @@ double theta_p(
            zpp * theta_partial_zp(x, xp, z, zp);
 }
 
-// a function f(x,x',z,z',u) such that the lagrangian is f(x,x',z,z',θ*'(x,x',z,z'))
+// a function f(x,x',z,z',u) such that the lagrangian is f(x,x',z,z',θ'(x,x',z,z'))
 double lagr_intermediate(double x, double xp, double z, double zp, double u) {
     double norm = hypot(x, z);
     double yaw_offset = - M_PI * 250 / (norm + 1000);
     double sin_o = sin(yaw_offset),
           cos_o = cos(yaw_offset),
           fac = -20 * (1/norm - 1/2000.0f);
-    double current_x = fac * (cos_o * x + sin_o * z),
-          current_z = fac * (-sin_o * x + cos_o * z);
-    double a = S * zp,
-          b = -S * xp,
-          c = current_x * zp - current_z * xp;
-    double inner = (b + sqrt(a*a + b*b - c*c)) / (a - c);
-    double cos_theta = 2 / (1 + inner * inner) - 1;
-    double time_integrand = fabs(xp / (S * cos_theta + current_x));
-    double penalty_term = fmax(0, (u / time_integrand) / MAX_YAW_SPEED - 1);
+    double whirl_x = fac * (cos_o * x + sin_o * z),
+           whirl_z = fac * (-sin_o * x + cos_o * z);
+    double a = (whirl_x * zp - whirl_z * xp) / S,
+           b = xp * xp + zp * zp;
+    double sin_theta = (xp * sqrt(b - a * a) - a * zp) / b;
+    double time_integrand = fabs(xp / (S * sin_theta + whirl_x)) / (POINTS-1);
+    double penalty_term = fmax(0, (fabs(u) / time_integrand) / MAX_YAW_SPEED - 1);
     return time_integrand + PENALTY_FACTOR * penalty_term;
 }
 
 double lagrangian_with_precomputed(
-    double x, double xp, double xpp, double z, double zp, double zpp,
-    double x_current, double theta
+    double xp, double x_current, double theta, double theta_p
 ) {
-    double time_integrand = fabs(xp / (S * cos(theta) + x_current));
-    double thetap = theta_p(x, xp, xpp, z, zp, zpp);
-    double penalty_term = fmax(0, (thetap / time_integrand) / MAX_YAW_SPEED - 1);
+    double time_integrand = fabs(xp / (S * sin(theta) + x_current)) / (POINTS-1);
+    double penalty_term = fmax(0, (fabs(theta_p) / time_integrand) / MAX_YAW_SPEED - 1);
     return time_integrand + PENALTY_FACTOR * penalty_term;
 }
 
@@ -164,44 +158,44 @@ double lagr_inter_partial_theta(double x, double xp, double z, double zp, double
 
 double lagr_partial_x(
     double x, double xp, double xpp, double z, double zp, double zpp,
-    double u, double partial_u
+    double theta_p, double partial_u
 ) {
     double part = (
-        lagr_intermediate(x + D_EPS, xp, z, zp, u)
-        - lagr_intermediate(x - D_EPS, xp, z, zp, u)
+        lagr_intermediate(x + D_EPS, xp, z, zp, theta_p)
+        - lagr_intermediate(x - D_EPS, xp, z, zp, theta_p)
     ) / (2 * D_EPS);
     return part + thetap_partial_x(x, xp, xpp, z, zp, zpp) * partial_u;
 }
 
 double lagr_partial_xp(
     double x, double xp, double xpp, double z, double zp, double zpp,
-    double u, double partial_u
+    double theta_p, double partial_u
 ) {
     double part = (
-        lagr_intermediate(x, xp + D_EPS, z, zp, u)
-        - lagr_intermediate(x, xp - D_EPS, z, zp, u)
+        lagr_intermediate(x, xp + D_EPS, z, zp, theta_p)
+        - lagr_intermediate(x, xp - D_EPS, z, zp, theta_p)
     ) / (2 * D_EPS);
     return part + thetap_partial_xp(x, xp, xpp, z, zp, zpp) * partial_u;
 }
 
 double lagr_partial_z(
     double x, double xp, double xpp, double z, double zp, double zpp,
-    double u, double partial_u
+    double theta_p, double partial_u
 ) {
     double part = (
-        lagr_intermediate(x, xp, z + D_EPS, zp, u)
-        - lagr_intermediate(x, xp, z - D_EPS, zp, u)
+        lagr_intermediate(x, xp, z + D_EPS, zp, theta_p)
+        - lagr_intermediate(x, xp, z - D_EPS, zp, theta_p)
     ) / (2 * D_EPS);
     return part + thetap_partial_z(x, xp, xpp, z, zp, zpp) * partial_u;
 }
 
 double lagr_partial_zp(
     double x, double xp, double xpp, double z, double zp, double zpp,
-    double u, double partial_u
+    double theta_p, double partial_u
 ) {
     double part = (
-        lagr_intermediate(x, xp, z, zp + D_EPS, u)
-        - lagr_intermediate(x, xp, z, zp - D_EPS, u)
+        lagr_intermediate(x, xp, z, zp + D_EPS, theta_p)
+        - lagr_intermediate(x, xp, z, zp - D_EPS, theta_p)
     ) / (2 * D_EPS);
     return part + thetap_partial_zp(x, xp, xpp, z, zp, zpp) * partial_u;
 }
@@ -213,13 +207,14 @@ double objective(struct data *d) {
         total += d->lagrangian[i];
     }
 
-    return total / (POINTS-1);
+    return total;
 }
 
 void recompute_dependent(struct data *d) {
     struct path *p = &d->p;
     derivative(d->xp, p->x, POINTS);
     derivative(d->zp, p->z, POINTS);
+    derivative(d->lambda_p, d->lambda, POINTS);
     derivative(d->xpp, d->xp, POINTS-1);
     derivative(d->zpp, d->zp, POINTS-1);
     d->xpp[POINTS-2] = d->xpp[POINTS-3];
@@ -237,10 +232,12 @@ void recompute_dependent(struct data *d) {
             x, xp, z, zp,
             &d->theta[i], &x_current
         );
-        d->partial_theta[i] = lagr_inter_partial_theta(x, xp, z, zp, d->theta[i]);
+        d->theta_p[i] = theta_p(x, xp, xpp, z, zp, zpp);
+        d->partial_theta[i] = lagr_inter_partial_theta(
+            x, xp, z, zp, d->theta_p[i]
+        );
         d->lagrangian[i] = lagrangian_with_precomputed(
-            x, xp, xpp, z, zp, zpp,
-            x_current, d->theta[i]
+            xp, x_current, d->theta[i], d->theta_p[i]
         );
     }
 }

@@ -1,35 +1,38 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
+def whirl(x, z):
+    norm = np.sqrt(x ** 2 + z ** 2)
+    yaw_offset = - np.pi * 250 / (norm + 1000)
+    sin_o = np.sin(yaw_offset)
+    cos_o = np.cos(yaw_offset)
+    fac = -20 * (1/norm - 1/2000)
+    whirl_x = fac * (cos_o * x + sin_o * z)
+    whirl_z = fac * (-sin_o * x + cos_o * z)
+    return whirl_x, whirl_z
+
 if __name__ == '__main__':
     print("Reading paths")
     memory = []
     Mx = []
     Mz = []
-    yaws = []
     with open("path.txt", "r") as f:
         for ln in f:
             if ln != "\n":
                 coords = ln.split(",")
                 Mx.append(float(coords[0]))
                 Mz.append(float(coords[1]))
-                if len(coords) >= 3:
-                    yaws.append(float(coords[2]))
             else:
                 memory.append((Mx, Mz))
                 Mx = []
                 Mz = []
     
-    print("Reading yaws")
+    
+    print("Reading debug")
     yaw_path = []
-    with open("yaws.txt", "r") as f:
+    with open("debug.txt", "r") as f:
         for ln in f:
-            vals = ln.split(",")
-            yaw_path.append((
-                float(vals[0]),
-                float(vals[1]), 
-                float(vals[2])
-            ))
+            yaw_path.append(map(float, ln.split(",")[:3]))
 
     print("Done reading from files, plotting")
 
@@ -56,11 +59,28 @@ if __name__ == '__main__':
     plt.plot(Mx, Mz, 'r-')
     n = len(yaw_path)
     for i, (x, z, t) in enumerate(yaw_path):
+        if i%3:
+            continue
+        # angles oriented relative to z+
+        dxp, dzp = np.sin(t) * 28, np.cos(t) * 28
+        dxw, dzw = whirl(x,z)
         plt.arrow(
             x, z,
-            np.sin(t) * 300, np.cos(t) * 300,
+            dxw, dzw,
             width = 10, zorder=100,
-            color = (i/n, 1.0, 0.0)
+            color = (0.0, 1.0, 0.0)
+        )
+        plt.arrow(
+            x, z,
+            dxp * 5, dzp * 5,
+            width = 10, zorder=100,
+            color = (1.0, 1.0, 0.0)
+        )
+        plt.arrow(
+            x, z,
+            dxp + dxw, dzp + dzw,
+            width = 10, zorder=100,
+            color = "k"
         )
     
     # plt.plot(Mx, Mz, 'ro')
