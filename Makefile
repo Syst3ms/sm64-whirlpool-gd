@@ -1,13 +1,13 @@
-CC = gcc
-CFLAGS = -Wall -Wextra -Werror -MMD -MP
-LFLAGS =
-OFLAGS = -O2
-SRCS = main.c util.c math_funcs.c
-EXEC = whirlpool_gd
-BUILDDIR = ./build
+CC := gcc
+CFLAGS := -Wall -Wextra -Werror -MMD -MP -march=native
+LFLAGS :=
+OFLAGS := -O2
+SRCS := $(wildcard *.c)
+EXEC := whirlpool_gd
+BUILDDIR := ./build
 
-OBJS = $(SRCS:%.c=$(BUILDDIR)/%.o)
-DEPS = $(OBJS:.o=.d)
+OBJS := $(SRCS:%.c=$(BUILDDIR)/%.o)
+DEPS := $(OBJS:.o=.d)
 
 .PHONY: run_and_plot plot run build clean
 

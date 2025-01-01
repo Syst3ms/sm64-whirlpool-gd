@@ -1,8 +1,6 @@
 #pragma once
 
-#define POINTS 128
-#define MOMENTUM_PARAM 0.8
-#define BASE_MEM_SIZE 100
+#include "parameters.h"
 
 // TYPES
 
@@ -18,15 +16,17 @@ struct data {
     struct path p;
     double lambda[POINTS];
     // refers to points 1 through POINTS-1
-    double xp[POINTS-1], zp[POINTS-1], lambda_p[POINTS-1];
+    double xp[POINTS-1], zp[POINTS-1];
     // refers to points 1 through POINTS-2, padded with last value
     double xpp[POINTS-1], zpp[POINTS-1];
-    double theta[POINTS-1], theta_p[POINTS-1], partial_theta[POINTS-1];
+    double theta[POINTS-1], theta_p[POINTS-1], partial_theta[POINTS-1]; 
+    double time_int[POINTS-1];
     double lagrangian[POINTS-1];
 };
 
 struct momentum {
     double x[POINTS-2], z[POINTS-2];
+    double ut_x[POINTS-2], ut_z[POINTS-2];
 };
 
 struct hitbox {
@@ -47,9 +47,19 @@ struct memory {
 
 void array_copy(double *dst, double *src, int length);
 void derivative(double *dst, double *src, int srclen);
+double lerp_factor(double start, double end, double target);
 void lerp(double *dst, double start, double end, int start_i, int end_i);
 double theta(double x, double z, double xp, double zp);
 void make_copy(struct data *dst, struct data *src);
 struct memory init_memory(int initial_size);
 void store_into_memory(struct path *p, struct memory *mem);
 void free_mem(struct memory *mem);
+unsigned short radians_to_au(double rad);
+void update_and_apply_momentum(
+    struct path *p,
+    struct momentum *mom,
+    double *delta_x,
+    double *delta_z,
+    double eps,
+    char first
+);

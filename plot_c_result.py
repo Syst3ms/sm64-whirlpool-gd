@@ -1,6 +1,9 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
+def au_to_radians(a):
+    return a / 65536 * 2 * np.pi
+
 def whirl(x, z):
     norm = np.sqrt(x ** 2 + z ** 2)
     yaw_offset = - np.pi * 250 / (norm + 1000)
@@ -30,9 +33,11 @@ if __name__ == '__main__':
     
     print("Reading debug")
     yaw_path = []
-    with open("debug.txt", "r") as f:
+    with open("resampled.txt", "r") as f:
+        f.readline()
         for ln in f:
-            yaw_path.append(map(float, ln.split(",")[:3]))
+            vals = ln.split(",")
+            yaw_path.append((float(vals[0]), float(vals[1]), au_to_radians(float(vals[2]))))
 
     print("Done reading from files, plotting")
 
