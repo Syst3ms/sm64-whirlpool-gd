@@ -1,31 +1,34 @@
 CC := gcc
-CFLAGS := -Wall -Wextra -Werror -MMD -MP -march=native
+CFLAGS := -Wall -Wextra -Werror -std=gnu11 -MMD -MP -march=native
 LFLAGS :=
-OFLAGS := -O2
-SRCS := $(wildcard *.c)
+OFLAGS := -Ofast
 EXEC := whirlpool_gd
 BUILDDIR := ./build
+SRCDIR := ./src
+SRC_PAT := $(SRCDIR)/%.c
+OBJ_PAT := $(BUILDDIR)/%.o
 
-OBJS := $(SRCS:%.c=$(BUILDDIR)/%.o)
+SRCS := $(wildcard $(SRCDIR)/*.c)
+OBJS := $(SRCS:$(SRC_PAT)=$(OBJ_PAT))
 DEPS := $(OBJS:.o=.d)
 
-.PHONY: run_and_plot plot run build clean
+.PHONY: run_and_plot plot run build clean assembly
 
 run_and_plot: run plot
 
 plot:
 	@python plot_c_result.py
-	
+
 run: build
-	@./$(EXEC).exe
+	@$(EXEC).exe
 
 build: $(OBJS)
-	$(CC) $(LFLAGS) $(OFLAGS) -o $(EXEC) $(OBJS)
+	$(CC) $(LFLAGS) -o $(EXEC) $(OBJS)
 
 debug: OFLAGS = -g
 debug: build
 
-$(BUILDDIR)/%.o: %.c
+$(OBJ_PAT): $(SRC_PAT)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(OFLAGS) -o $@ -c $<
 

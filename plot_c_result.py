@@ -43,7 +43,7 @@ if __name__ == '__main__':
 
     N = len(memory)
     for i, (oldMx, oldMz) in enumerate(memory):
-        plt.plot(oldMx, oldMz, '-', color=(i / N, 0.0, 1.0 - i / N))
+        plt.plot(oldMx, oldMz, '-', color=(i / (2*N), 0.0, 1.0 - i / (2*N)))
 
     ax = plt.gca()
 
@@ -61,30 +61,30 @@ if __name__ == '__main__':
             ax.add_patch(plt.Circle((rx[i], rz[i]), 150, fill=False))
         ax.annotate(txt[i], (rx[i], rz[i]))
 
-    plt.plot(Mx, Mz, 'r-')
+    plt.plot(Mx, Mz, 'r-', linewidth=3)
     n = len(yaw_path)
     for i, (x, z, t) in enumerate(yaw_path):
         if i%3:
             continue
         # angles oriented relative to z+
-        dxp, dzp = np.sin(t) * 28, np.cos(t) * 28
+        dxp, dzp = np.sin(t) * 15, np.cos(t) * 15
         dxw, dzw = whirl(x,z)
         plt.arrow(
             x, z,
             dxw, dzw,
-            width = 10, zorder=100,
+            width = 4, zorder=100,
             color = (0.0, 1.0, 0.0)
         )
         plt.arrow(
             x, z,
             dxp * 5, dzp * 5,
-            width = 10, zorder=100,
+            width = 4, zorder=100,
             color = (1.0, 1.0, 0.0)
         )
         plt.arrow(
             x, z,
             dxp + dxw, dzp + dzw,
-            width = 10, zorder=100,
+            width = 4, zorder=100,
             color = "k"
         )
     
