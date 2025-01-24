@@ -5,13 +5,127 @@
 #include <limits.h>
 #include <math.h>
 #include <memory.h>
+#include <mm_malloc.h>
 #include <stdio.h>
 #include <stdlib.h>
 
 #include "autodiff.h"
+#include "math_funcs.h"
 #include "parameters.h"
 #include "util.h"
 #include "renormalization.h"
+
+// initialize the path while respecting yaw velocity constraint
+void init_path_smooth_yaw(
+    struct data *d,
+    v2d start, v2d end,
+    int start_i, int end_i
+) {
+    v2d prev_prev_pos, prev_pos;
+    double prev_theta;
+
+    {
+        v2d step = (end - start) / (double) (end_i - start_i);
+        v2d vel = step * POINTS;
+        prev_prev_pos               = d->points[start_i].v.pos      = start;
+        prev_pos                    = d->points[start_i+1].v.pos    = start + step;
+        d->points[start_i].v.vel    = d->points[start_i+1].v.vel    = vel;
+        compute_lagrangian_with_intermediates(&d->points[start_i].pv);
+        compute_lagrangian_with_intermediates(&d->points[start_i+1].pv);
+        prev_theta = d->points[start_i+1].pv.theta;
+    }
+
+    for (int i = start_i+2; i < end_i; i++) {
+        //printf("%d\n",i);
+        // try to go straight toward `end`
+        v2d pos = prev_pos + (end - prev_pos) / (double) (end_i - i + 1);
+        // second-order backward difference
+        v2d vel = (prev_prev_pos - 4 * prev_pos + 3 * pos) * POINTS / 2.0;
+
+        double cur_theta;
+        double max_range = OVERSMOOTH_FACTOR * theta_maxrange(pos, vel, &cur_theta);
+        double angle_diff = remainder(prev_theta - cur_theta, 2*M_PI);
+
+        if (fabs(angle_diff) < max_range) {
+            goto found_theta;
+        }
+
+        /*
+         * max yaw speed exceeded, now try to rotate `pos` around `prev_pos`
+         * as little as possible to satisfy the angle constraint
+         */
+        double r = fast_hypot_v((end - prev_pos) / (double) (end_i - i + 1));
+        double target = move_towards(prev_theta, cur_theta, max_range);
+
+        // false position method, find phi_a and phi_b that give angles on
+        // either side of the target
+        double phi = atan2((end - prev_pos)[0], (end - prev_pos)[1]),
+               diff = remainder(target - cur_theta, 2 * M_PI);
+        double phi_a, diff_a;
+        double phi_b = phi, diff_b = diff;
+        double angle_step = diff;
+
+        do {
+            phi_a = phi_b;
+            diff_a = diff_b;
+            phi_b += angle_step;
+
+            v2d off_b = {sin(phi_b), cos(phi_b)};
+            off_b *= r;
+            v2d pos_b = prev_pos + off_b;
+            v2d vel_b = (prev_prev_pos - 4 * prev_pos + 3 * pos_b) * POINTS / 2.0;
+
+            double theta_b;
+            double maxrange_b = OVERSMOOTH_FACTOR * theta_maxrange(pos_b, vel_b, &theta_b);
+
+            double tmpdiff = prev_theta - theta_b;
+            diff_b = remainder(tmpdiff - copysign(maxrange_b, tmpdiff), 2*M_PI);
+
+            if (fabs(diff_b) < ONE_HAU) {
+                phi = phi_b;
+                diff = diff_b;
+                cur_theta = theta_b;
+                goto found_theta;
+            }
+        } while (is_sign_same(diff_a, diff_b));
+
+        // false position method, run actual search
+        do {
+            phi = (phi_a * diff_b - phi_b * diff_a) / (diff_b - diff_a);
+            v2d off = {sin(phi), cos(phi)};
+            off *= r;
+
+            pos = prev_pos + off;
+            vel = (prev_prev_pos - 4 * prev_pos + 3 * pos) * POINTS / 2.0;
+
+            max_range = OVERSMOOTH_FACTOR * theta_maxrange(pos, vel, &cur_theta);
+
+            double tmpdiff = prev_theta - cur_theta;
+            diff = remainder(tmpdiff - copysign(max_range, tmpdiff), 2*M_PI);
+
+            if (is_sign_same(diff, diff_a)) {
+                phi_a = phi;
+                diff_a = diff;
+            } else {
+                phi_b = phi;
+                diff_b = diff;
+            }
+        } while (fabs(diff) >= ONE_HAU);
+
+        found_theta:
+        d->points[i].v.pos = pos;
+        d->points[i].v.vel = vel;
+        compute_lagrangian_with_intermediates(&d->points[i].pv);
+
+        prev_theta = cur_theta;
+        prev_prev_pos = prev_pos;
+        prev_pos = pos;
+    }
+
+    d->points[end_i].v.pos = end;
+    d->points[end_i].v.vel = (prev_prev_pos - 4 * prev_pos + 3 * end) * POINTS / 2.0;
+    compute_lagrangian_with_intermediates(&d->points[end_i].pv);
+}
 
 void init_path(
     struct data *d,
@@ -49,7 +163,7 @@ void initialize_path(
     double fac = margin / fast_hypot(dx, dz);
     v2d start = {start_x + dx * fac, start_z + dz * fac};
     v2d end = {end_x - dx * fac, end_z - dz * fac};
-    init_path(d, start, end, 0, POINTS-1);
+    init_path_smooth_yaw(d, start, end, 0, POINTS-1);
 }
 
 void initialize_path_inter(
@@ -74,6 +188,34 @@ void initialize_path_inter(
     init_path(d, mid, end, half, POINTS-1);
 }
 
+double objective(struct data *d) {
+    double sum = 0.0;
+    for (int i = 1; i < POINTS; i++) {
+        compute_lagrangian_with_intermediates(&d->points[i].pv);
+        sum += d->points[i].pv.time_integrand;
+    }
+    return sum / (POINTS-1);
+}
+
+void descend(struct data *d, v2d *delta) {
+    d = __builtin_assume_aligned(d, 16);
+
+    struct pt_vel *cur_pt = &d->points[1].pv;
+    double cur_part_xp = lagr_partial_xp(cur_pt);
+    double cur_part_zp = lagr_partial_zp(cur_pt);
+
+    for (int i = 1; i < POINTS-1; i++) {
+        struct pt_vel *next_pt = &d->points[i+1].pv;
+        double next_part_xp = lagr_partial_xp(next_pt),
+               next_part_zp = lagr_partial_zp(next_pt);
+        delta[i-1][0] = lagr_partial_x(cur_pt) - (next_part_xp - cur_part_xp) * POINTS;
+        delta[i-1][1] = lagr_partial_z(cur_pt) - (next_part_zp - cur_part_zp) * POINTS;
+        cur_pt = next_pt;
+        cur_part_xp = next_part_xp;
+        cur_part_zp = next_part_zp;
+    }
+}
+
 void push_out_of_hitboxes(
     struct data *d,
     struct hitboxes *h
@@ -86,34 +228,76 @@ void push_out_of_hitboxes(
             v2d diff = p - hb.pos;
             // branchless
             double scaling = fmax(hb.radius / fast_hypot_v(diff) - 1.0, 0.0);
-            v2d sb = {scaling, scaling};
-            d->points[i].v.pos = p + diff * sb;
+            d->points[i].v.pos = p + diff * scaling;
         }
     }
 }
 
-void descend(struct data *d, v2d *delta) {
-    d = __builtin_assume_aligned(d, 16);
-    d->total_lagr_sum = 0.0;
+// tweak the path so that the yaw velocity doesn't exceed its maximum
+void smooth_out(struct data *d) {
+    // bounds: conservative start at i=2 to get a theta that makes sense at the previous step
+    // ends before the last value so as to not change it, and because prescribing an angle there doesn't matter
+    for (int i = 2; i < POINTS-1; i++) {
+        double prev_theta = d->points[i-1].pv.theta;
+        double cur_theta = d->points[i].pv.theta;
+        double maxrange = MAX_YAW_SPEED * d->points[i].pv.time_integrand / POINTS;
+        double angle_diff = prev_theta - cur_theta;
 
-    struct pt_vel *cur_pt = &d->points[1].pv;
-    double cur_part_xp = lagr_partial_xp_with_side_eff(cur_pt, &d->total_lagr_sum);
-    double cur_part_zp = lagr_partial_zp(cur_pt);
+        // formally we'd have to check this mod 2pi to deal with wrapping
+        // however thetas are computed in a way that won't introduce wrapping
+        if (fabs(angle_diff) < maxrange) {
+            continue; // short circuit
+        }
 
-    for (int i = 0; i < POINTS-2; i++) {
-        struct pt_vel *next_pt = &d->points[i+2].pv;
-        double next_part_xp = lagr_partial_xp_with_side_eff(next_pt, &d->total_lagr_sum),
-               next_part_zp = lagr_partial_zp(next_pt);
-        delta[i][0] = lagr_partial_x(cur_pt) - (next_part_xp - cur_part_xp) * POINTS;
-        delta[i][1] = lagr_partial_z(cur_pt) - (next_part_zp - cur_part_zp) * POINTS;
-        cur_pt = next_pt;
-        cur_part_xp = next_part_xp;
-        cur_part_zp = next_part_zp;
+        // try to target as close to within the bounds as possible
+        v2d prev_pos = d->points[i-1].v.pos;
+        v2d off = d->points[i].v.pos - prev_pos;
+        v4d pos_init = {prev_pos[0], 0.0, prev_pos[1], 0.0};
+
+        /*
+        * We will try to rotate the point around the previous one, converging
+        * towards an admissible angle. The current such
+        * angle serves as an initial guess.
+        */
+        double phi = atan2(off[0], off[1]);
+        double r = fast_hypot_v(off);
+        double target = prev_theta - copysign(maxrange, angle_diff);
+
+        union {
+            v4d v;
+            struct {
+                struct ad1d x, z;
+            };
+        } pos, vel;
+        struct ad1d theta;
+        
+        // first round doesn't change theta but computes its derivative as well
+        do {
+            v4d sincos_phi = {sin(phi), cos(phi), cos(phi), -sin(phi)};
+            v4d diff = sincos_phi * r;
+
+            //struct ad1d x = {prev_pos[0] + dx, dz};
+            //struct ad1d z = {prev_pos[1] + dz, -dx};
+            //struct ad1d xp = {dx * POINTS, dz * POINTS};
+            //struct ad1d zp = {dz * POINTS, -dx * POINTS};
+            pos.v = pos_init + diff;
+            vel.v = diff * POINTS;
+
+            theta_ad1(pos.x, pos.z, vel.x, vel.z, &theta, &maxrange);
+
+            angle_diff = target - theta.v;
+            phi -= (theta.v - target) / theta.d;
+        } while (fabs(angle_diff) >= maxrange / 10);
+
+        // we only need to update the position and theta for the next step
+        d->points[i].pv.x = pos.x.v;
+        d->points[i].pv.z = pos.z.v;
+        d->points[i].pv.theta = theta.v;
     }
 }
 
 void renormalize(struct data *d, v2d *renorm_w) {
-    d = __builtin_assume_aligned(d, 32);
+    d = __builtin_assume_aligned(d, 16);
     union point *points = d->points;
     // arclength renormalization, prevents wonky convergence behavior
 
@@ -138,10 +322,8 @@ void renormalize(struct data *d, v2d *renorm_w) {
         double scale = 1.0 / arclength[j];
         double along = (ref - arclength_so_far) * scale;
         while (along <= 1.0) {
-            v2d u = {1 - along, 1 - along};
-            v2d v = {along, along};
             // we need to add a point at the next step
-            renorm_w[i] = u * w + v * wn;
+            renorm_w[i] = (1 - along) * w + along * wn;
             i++;
             double inc = tot_arclength / (POINTS-1);
             ref += inc;
@@ -204,6 +386,8 @@ void optimize(
 
         push_out_of_hitboxes(d, active_hitboxes);
 
+        smooth_out(d);
+
         renormalize(d, renorm_w);
 
         recompute_dependent(d);
@@ -265,7 +449,7 @@ void optimize(
 }
 
 int main(void) {
-
+    puts("Initializing path");
     struct data d;
 
     /* Chests:
@@ -289,7 +473,7 @@ int main(void) {
         {{774, 23}, 150}
     };
 
-    struct hitboxes *hitboxes = malloc(sizeof(struct hitboxes) + sizeof(hb));
+    struct hitboxes *hitboxes = _mm_malloc(sizeof(struct hitboxes) + sizeof(hb), 16);
 
     if (hitboxes == NULL) {
         puts("Couldn't allocate hitboxes!");
@@ -300,9 +484,22 @@ int main(void) {
     hitboxes->num_hb = len;
     memcpy(hitboxes->hb, hb, sizeof(hb));
 
+    puts("Pushing out of hitboxes");
     push_out_of_hitboxes(&d, hitboxes);
 
-    optimize(&d, hitboxes, 1e-9f, INT_MAX, 50000);
+    //optimize(&d, hitboxes, 1e-9f, INT_MAX, 50000);
+
+    FILE *f = fopen(".\\path.txt", "w");
+    if (!f) {
+        puts("Couldn't open file for path!");
+        exit(1);
+    }
+    for (int i = 0; i < POINTS; i++) {
+        struct pt p = d.points[i].p;
+        fprintf(f, "%f,%f\n", p.x, p.z);
+    }
+    fprintf(f, "\n");
+    fclose(f);
 
     puts("Writing debug data...");
 
@@ -310,7 +507,7 @@ int main(void) {
 
     puts("Done");
 
-    free(hitboxes);
+    _mm_free(hitboxes);
 
     return 0;
 }

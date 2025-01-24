@@ -61,7 +61,7 @@ if __name__ == '__main__':
             ax.add_patch(plt.Circle((rx[i], rz[i]), 150, fill=False))
         ax.annotate(txt[i], (rx[i], rz[i]))
 
-    plt.plot(Mx, Mz, 'r-', linewidth=3)
+    #plt.plot(Mx, Mz, 'r-', linewidth=3)
     n = len(yaw_path)
     for i, (x, z, t) in enumerate(yaw_path):
         if i%3:
