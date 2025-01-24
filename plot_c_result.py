@@ -31,7 +31,7 @@ if __name__ == '__main__':
                 Mz = []
     
     
-    print("Reading debug")
+    print("Reading resampled")
     yaw_path = []
     with open("resampled.txt", "r") as f:
         f.readline()
@@ -67,7 +67,7 @@ if __name__ == '__main__':
         if i%3:
             continue
         # angles oriented relative to z+
-        dxp, dzp = np.sin(t) * 15, np.cos(t) * 15
+        dxp, dzp = np.sin(t) * 28, np.cos(t) * 28
         dxw, dzw = whirl(x,z)
         plt.arrow(
             x, z,

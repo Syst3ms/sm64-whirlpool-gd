@@ -10,8 +10,6 @@
 #include "types.h"
 #include "util.h"
 
-typedef double v4d __attribute__((vector_size(32)));
-
 struct autodiff {
     double dx, dz, dxp, dzp;
     double v;
@@ -203,7 +201,7 @@ double compute_lagrangian_(struct pt_vel *pt) {
     pt = __builtin_assume_aligned(pt, 16);
     double x = pt->x, z = pt->z, xp = pt->xp, zp = pt->zp, xpp = pt->xpp, zpp = pt->zpp;
     struct autodiff norm = hypot_xz(x, z), speed_norm = hypot_xpzp(xp, zp);
-    double norm_d = fast_hypot(x, z), speed_norm_d = fast_hypot(xp, zp);
+    double norm_d = length(x, z), speed_norm_d = length(xp, zp);
     struct autodiff yaw_offset = scalar_div_ad(- M_PI * 250.0, add_scalar_ad(norm, 1000.0));
     double yaw_offset_d = - M_PI * 250.0 / (norm_d + 1000.0);
     struct autodiff sin_o, cos_o;
@@ -239,7 +237,22 @@ double compute_lagrangian_(struct pt_vel *pt) {
     return lagrangian;
 }
 
-double compute_lagrangian(struct pt_vel *pt) {
+void compute_lagrangian_with_intermediates(struct pt_vel *pt) {
+    double x = pt->x, z = pt->z, xp = pt->xp, zp = pt->zp;
+    double norm = length(x, z),
+           speed_norm = length(xp, zp);
+    double yaw_offset = - M_PI * 250.0 / (norm + 1000.0);
+    double sin_o = sin(yaw_offset),
+          cos_o = cos(yaw_offset),
+          fac = -20 * (1/norm - 1/2000.0);
+    double whirl_x = fac * (cos_o * x + sin_o * z),
+           whirl_z = fac * (-sin_o * x + cos_o * z);
+    double det = whirl_x * zp - whirl_z * xp;
+    pt->theta = acos(det / (S * speed_norm)) - atan2(zp, xp);
+    pt->time_integrand = fabs(xp / (S * sin(pt->theta) + whirl_x));
+}
+
+double compute_lagrangian__(struct pt_vel *pt) {
     pt = __builtin_assume_aligned(pt, 16);
     double x = pt->x, z = pt->z, xp = pt->xp, zp = pt->zp, xpp = pt->xpp, zpp = pt->zpp;
     struct autodiff norm = hypot_xz(x, z), speed_norm = hypot_xpzp(xp, zp);
@@ -280,64 +293,108 @@ double time_integrand_alone(v2d pos, v2d vel) {
     return fabs(xp / (S * sin_theta + whirl_x));
 }
 
-double compute_lagrangian_and_set_time_integrand(struct pt_vel *pt, double *time_integrand_out) {
-    pt = __builtin_assume_aligned(pt, 16);
-    double x = pt->x, z = pt->z, xp = pt->xp, zp = pt->zp, xpp = pt->xpp, zpp = pt->zpp;
-    struct autodiff norm = hypot_xz(x, z), speed_norm = hypot_xpzp(xp, zp);
-    struct autodiff yaw_offset = scalar_div_ad(- M_PI * 250.0, add_scalar_ad(norm, 1000.0));
-    struct autodiff sin_o, cos_o;
-    sincos_ad(yaw_offset, &sin_o, &cos_o);
-    struct autodiff fac = add_scalar_ad(scalar_div_ad(-20.0, norm), 0.01);
-    struct autodiff whirl_x_no_fac = dot_xz_ad(cos_o, sin_o, x, z),
-                    whirl_z_no_fac = dot_nx_z_ad(sin_o, cos_o, x, z);
-    struct autodiff det = mul_ad(
-        dot_nxp_zp_ad(whirl_z_no_fac, whirl_x_no_fac, xp, zp),
-        fac
-    );
-    struct autodiff theta = sub_ad(
-        acos_ad(div_ad(det, mul_scalar_ad(speed_norm, S))),
-        atan2_zpxp_ad(xp, zp)
-    );
-    double theta_p = xp * theta.dx + zp * theta.dz + xpp * theta.dxp + zpp * theta.dzp;
-    double time_integrand = fabs(xp / (S * sin(theta.v) + whirl_x_no_fac.v * fac.v));
-    double penalty_term = soft_excess(fabs(theta_p) / time_integrand, MAX_YAW_SPEED);
-
-    *time_integrand_out = time_integrand;
-    return time_integrand + PENALTY_FACTOR * penalty_term;
+struct ad1d hypot_ad1(struct ad1d a, struct ad1d b) {
+    double hyp = sqrt(a.v * a.v + b.v * b.v);
+    struct ad1d ret = {
+        hyp,
+        (a.v * a.d + b.v * b.d) / hyp
+    };
+    return ret;
 }
 
-#define LAGR_PARTIAL(var)\
-    LAGR_PARTIAL_HEADER(var) {\
-        double orig = pt->var;\
-        pt->var *= D_FAC_UP;\
-        double lagr_up = compute_lagrangian(pt);\
-        pt->var = orig;\
-        pt->var *= D_FAC_DOWN;\
-        double lagr_down = compute_lagrangian(pt);\
-        pt->var = orig;\
-        return (lagr_up - lagr_down) / (2 * D_EPS * orig);\
-    }\
+struct ad1d add_scalar_ad1(struct ad1d a, double s) {
+    struct ad1d ret = a;
+    ret.v += s;
+    return ret;
+}
 
-LAGR_PARTIAL(x)
-LAGR_PARTIAL(z)
-LAGR_PARTIAL(xp)
-LAGR_PARTIAL(zp)
+struct ad1d mul_scalar_ad1(struct ad1d a, double s) {
+    struct ad1d ret = a;
+    ret.v *= s;
+    ret.d *= s;
+    return ret;
+}
 
-double lagr_partial_xp_with_side_eff(struct pt_vel *pt, double *objective) {
-    double time_int_up, time_int_down,
-           lagr_up, lagr_down;
-    double orig = pt->xp;
+struct ad1d scalar_div_ad1(double s, struct ad1d a) {
+    struct ad1d ret;
+    ret.v = s / a.v;
+    ret.d = - a.d * s / (a.v * a.v);
+    return ret;
+}
 
-    pt->xp *= D_FAC_UP;
-    lagr_up = compute_lagrangian_and_set_time_integrand(pt, &time_int_up);
-    pt->xp = orig;
+void sincos_ad1(struct ad1d a, struct ad1d *sin_res, struct ad1d *cos_res) {
+    double sin_a = sin(a.v), cos_a = cos(a.v);
 
-    pt->xp *= D_FAC_DOWN;
-    lagr_down = compute_lagrangian_and_set_time_integrand(pt, &time_int_down);
-    pt->xp = orig;
+    sin_res->d = cos_a * a.d;
+    sin_res->v = sin_a;
 
-    pt->time_integrand = (time_int_up + time_int_down) / 2;
-    *objective += (lagr_up + lagr_down) / 2;
+    cos_res->d = -sin_a * a.d;
+    cos_res->v = cos_a;
+}
 
-    return (lagr_up - lagr_down) / (2 * D_EPS * orig);
+struct ad1d div_ad1(struct ad1d a, struct ad1d b) {
+    double den = 1 / b.v;
+    double fac = a.v * den * den;
+
+    struct ad1d ret;
+    ret.v = a.v * den;
+    ret.d = a.d * den - b.d * fac;
+    
+    return ret;
+}
+
+struct ad1d add_ad1(struct ad1d a, struct ad1d b) {
+    struct ad1d ret;
+    ret.v = a.v + b.v;
+    ret.d = a.d + b.d;
+    return ret;
+}
+
+struct ad1d sub_ad1(struct ad1d a, struct ad1d b) {
+    struct ad1d ret;
+    ret.v = a.v - b.v;
+    ret.d = a.d - b.d;
+    return ret;
+}
+
+struct ad1d mul_ad1(struct ad1d a, struct ad1d b) {
+    struct ad1d ret;
+    ret.v = a.v * b.v;
+    ret.d = a.v * b.d + a.d * b.v;
+    return ret;
+}
+
+struct ad1d acos_ad1(struct ad1d a) {
+    struct ad1d ret;
+    double fac = - 1 / sqrt(1 - a.v * a.v);
+    ret.v = acos(a.v);
+    ret.d = a.v * fac;
+    return ret;
+}
+
+struct ad1d atan2_ad1(struct ad1d a, struct ad1d b) {
+    struct ad1d ret;
+    ret.v = atan2(a.v, b.v);
+    ret.d = (b.v * a.d - a.v * b.d) / (a.v * a.v + b.v * b.v);
+    return ret;
+}
+
+void theta_ad1(struct ad1d x, struct ad1d z, struct ad1d xp, struct ad1d zp, struct ad1d *out, double *maxrange_out) {
+    struct ad1d norm = hypot_ad1(x, z),
+                vel_norm = hypot_ad1(xp, zp);
+    struct ad1d fac = add_scalar_ad1(scalar_div_ad1(-20, norm), 0.01);
+    struct ad1d yaw_offset = scalar_div_ad1(-M_PI*250, add_scalar_ad1(norm, 1000));
+    struct ad1d sin_o, cos_o;
+    sincos_ad1(yaw_offset, &sin_o, &cos_o);
+    struct ad1d whirl_x_nf = add_ad1(mul_ad1(cos_o, x), mul_ad1(sin_o, z)),
+                whirl_z_nf = sub_ad1(mul_ad1(cos_o, z), mul_ad1(sin_o, x));
+    struct ad1d det = mul_ad1(fac, sub_ad1(mul_ad1(whirl_x_nf, zp), mul_ad1(whirl_z_nf, xp)));
+    struct ad1d theta = sub_ad1(
+        acos_ad1(
+            div_ad1(det, mul_scalar_ad1(vel_norm, S))
+        ),
+        atan2_ad1(zp, xp)
+    );
+    *out = theta;
+    *maxrange_out = OVERSMOOTH_FACTOR * MAX_YAW_SPEED / POINTS * fabs(xp.v / (S * sin(theta.v) + whirl_x_nf.v * fac.v));
 }

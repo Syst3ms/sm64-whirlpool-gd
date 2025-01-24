@@ -4,16 +4,8 @@
 
 #include "parameters.h"
 
-struct path {
-    double x[POINTS], z[POINTS];
-};
-
-struct intermediates {
-    double theta, current_x;
-};
-
 struct pt_vel {
-    double x, z, xp, zp, xpp, zpp, time_integrand, lagrangian;
+    double x, z, xp, zp, xpp, zpp, time_integrand, theta;
 };
 
 struct pt {
@@ -21,6 +13,7 @@ struct pt {
 };
 
 typedef double v2d __attribute__((vector_size (16)));
+typedef double v4d __attribute__((vector_size (32)));
 
 struct vec_pt {
     _Alignas(16) v2d pos, vel, acc, extra;
@@ -34,7 +27,6 @@ union point {
 
 struct data {
     union point points[POINTS];
-    double total_lagr_sum;
 };
 
 struct mom_point {
@@ -58,4 +50,8 @@ struct hitboxes {
 struct memory {
     int size, next;
     struct pt *pts;
+};
+
+struct ad1d {
+    double v, d;
 };

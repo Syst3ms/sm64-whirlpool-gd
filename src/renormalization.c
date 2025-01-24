@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <mm_malloc.h>
 #include <stdio.h>
+#include <memory.h>
 #include <math.h>
 #include <errno.h>
 
@@ -18,7 +19,7 @@ void output_resampled(int length, v2d *p, double *yaws) {
     }
 
     fprintf(f, "x,z,yaw,yaw_diff\n");
-    unsigned short prev_au = 0;
+    unsigned short prev_au = radians_to_au(yaws[0]);
     for (int i = 0; i < length; i++) {
         unsigned short cur = radians_to_au(yaws[i]);
         short diff = cur - prev_au;
@@ -37,7 +38,7 @@ void output_resampled(int length, v2d *p, double *yaws) {
 void find_resampled(v2d ref, v2d first, v2d second, double target_length, v2d *res) {
     if (ref[0] == first[0] && ref[1] == first[1]) {
         // direct lerp
-        double fac = target_length / fast_hypot_v(second - first);
+        double fac = target_length / length_v(second - first);
         *res = (1-fac) * first + fac * second;
         return; 
     }
@@ -54,22 +55,11 @@ void find_resampled(v2d ref, v2d first, v2d second, double target_length, v2d *r
     *res = (1-fac) * first + fac * second;
 }
 
-void * _mm_realloc(void *aligned_ptr, size_t size, size_t align)
-{
-  void *malloc_ptr = ((void**) aligned_ptr)[-1];
-
-  malloc_ptr = realloc(malloc_ptr, size + align);
-  if (!malloc_ptr)
-    return ((void *) 0);
-
-  /* Align  We have at least sizeof (void *) space below malloc'd ptr. */
-  aligned_ptr = (void *) (((size_t) malloc_ptr + align)
-			  & ~((size_t) (align) - 1));
-
-  /* Store the original pointer just before p.  */	
-  ((void **) aligned_ptr) [-1] = malloc_ptr;
-
-  return aligned_ptr;
+void * _mm_realloc(void *aligned_ptr, size_t prev_size, size_t size, size_t align) {
+    void *new = _mm_malloc(size, align);
+    memcpy(new, aligned_ptr, prev_size);
+    _mm_free(aligned_ptr);
+    return new;
 }
 
 v2d * inc_and_realloc_if_necessary(int *i, int *cap, v2d **arr) {
@@ -77,7 +67,7 @@ v2d * inc_and_realloc_if_necessary(int *i, int *cap, v2d **arr) {
 
     if (*i == *cap) {
         *cap += POINTS;
-        v2d *new_ptr = _mm_realloc(*arr, *cap * sizeof(v2d), 16);
+        v2d *new_ptr = _mm_realloc(*arr, *i * sizeof(v2d), *cap * sizeof(v2d), 16);
         if ((*arr = new_ptr) == NULL) {
             puts("Couldn't reallocate renorm arrays!");
             exit(1);
@@ -110,7 +100,7 @@ void resample_time_to_frame(struct data *d, int *res_len, v2d **new_array) {
             int k = last_sample;
             v2d prev_pos = d->points[k].v.pos;
             v2d next_pos = d->points[k+1].v.pos;
-            while (k < POINTS-2 && fast_hypot_v(next_pos - last_renorm) < outgoing_speed * TIME_PER_FRAME)
+            while (k < POINTS-2 && length_v(next_pos - last_renorm) < outgoing_speed * TIME_PER_FRAME)
             {
                 k++;
                 prev_pos = next_pos;
@@ -147,7 +137,7 @@ void compute_output_resampled(struct data *d) {
     }
 
     for (int i = 1; i < len; i++) {
-        vel[i] = (new[i] - new[i-1]) * POINTS;
+        vel[i] = (new[i] - new[i-1]) * (double) len;
     }
     vel[0] = vel[1];
 
