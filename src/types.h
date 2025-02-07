@@ -4,32 +4,15 @@
 
 #include "parameters.h"
 
-struct path {
-    double x[POINTS], z[POINTS];
-};
-
-struct intermediates {
-    double theta, current_x;
-};
-
-struct pt_vel {
-    double x, z, xp, zp, xpp, zpp, time_integrand, lagrangian;
-};
-
-struct pt {
-    double x, z;
-};
-
 typedef double v2d __attribute__((vector_size (16)));
 
-struct vec_pt {
-    _Alignas(16) v2d pos, vel, acc, extra;
-};
-
 union point {
-    struct pt p;
-    struct vec_pt v;
-    struct pt_vel pv;
+    struct {
+        double x, z, xp, zp, xpp, zpp, time_integrand, lagrangian; 
+    };
+    struct {
+        _Alignas(16) v2d pos, vel, acc, extra;
+    };
 };
 
 struct data {
@@ -57,5 +40,5 @@ struct hitboxes {
 
 struct memory {
     int size, next;
-    struct pt *pts;
+    v2d *pts;
 };

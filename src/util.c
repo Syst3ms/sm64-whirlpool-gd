@@ -15,7 +15,7 @@ struct memory init_memory(int initial_size) {
     struct memory mem = {
         initial_size,
         0,
-        malloc(initial_size * POINTS * sizeof(struct pt))
+        malloc(initial_size * POINTS * sizeof(v2d))
     };
 
     if (mem.pts == NULL) {
@@ -29,13 +29,13 @@ struct memory init_memory(int initial_size) {
 void store_into_memory(struct data *d, struct memory *mem) {
     int offset = POINTS * mem->next;
     for (int i = 0; i < POINTS; i++) {
-        mem->pts[offset + i] = d->points[i].p;
+        mem->pts[offset + i] = d->points[i].pos;
     }
 
     if (++mem->next >= mem->size) {
         mem->size += 1000;
         printf("Memory exceeded, reallocing to %d\n", mem->size);
-        mem->pts = realloc(mem->pts, mem->size * POINTS * sizeof(struct pt));
+        mem->pts = realloc(mem->pts, mem->size * POINTS * sizeof(v2d));
         if (mem->pts == NULL) {
             puts("Could not realloc!");
             exit(1);
@@ -76,30 +76,30 @@ void update_and_apply_momentum(
         struct mom_point mp = mom->points[i];
         v2d m = mom->points[i].xz = BETA_1 * mp.xz + (1 - BETA_1) * del;
         v2d u = mom->points[i].ut = _mm_max_pd(mp.ut * BETA_2, vabs_(del));
-        d->points[i+1].v.pos -= eps * m / u;
+        d->points[i+1].pos -= eps * m / u;
     }
 }
 
 double objective(struct data *d) {
     double sum = 0.0;
     for (int i = 1; i < POINTS; i++) {
-        sum += compute_lagrangian(&d->points[i].pv);
+        sum += compute_lagrangian(&d->points[i]);
     }
     return sum / (POINTS-1);
 }
 
 void recompute_dependent(struct data *d) {
     for (int i = 1; i < POINTS; i++) {
-        d->points[i].v.vel = (d->points[i].v.pos - d->points[i-1].v.pos) * POINTS;
+        d->points[i].vel = (d->points[i].pos - d->points[i-1].pos) * POINTS;
     }
-    d->points[0].v.vel = d->points[1].v.vel;
+    d->points[0].vel = d->points[1].vel;
 
     for (int i = 1; i < POINTS-1; i++) {
-        d->points[i].v.acc = (d->points[i+1].v.vel - d->points[i].v.vel) * POINTS;
+        d->points[i].acc = (d->points[i+1].vel - d->points[i].vel) * POINTS;
     }
     
     // zero-pad, maybe same-pad is better?
     v2d zero = {0.0, 0.0};
-    d->points[POINTS-1].v.acc = zero;
+    d->points[POINTS-1].acc = zero;
 }
 

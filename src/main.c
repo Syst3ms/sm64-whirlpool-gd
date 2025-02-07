@@ -25,11 +25,11 @@ void init_path(
 
     v2d pos = start;
     for (int i = start_i; i <= end_i; i++) {
-        struct vec_pt *p = &d->points[i].v;
+        union point *p = &d->points[i];
         p->pos = pos;
         p->vel = vel;
         p->acc = zero;
-        ((struct pt_vel *) p)->time_integrand = time_integrand_alone(pos, vel);
+        p->time_integrand = time_integrand_alone(pos, vel);
         pos += step;
     }
 }
@@ -82,12 +82,11 @@ void push_out_of_hitboxes(
     for (int j = 0; j < n; j++) {
         struct hitbox hb = h->hb[j];
         for (int i = 0; i < POINTS; i++) {
-            v2d p = d->points[i].v.pos;
+            v2d p = d->points[i].pos;
             v2d diff = p - hb.pos;
             // branchless
             double scaling = fmax(hb.radius / fast_hypot_v(diff) - 1.0, 0.0);
-            v2d sb = {scaling, scaling};
-            d->points[i].v.pos = p + diff * sb;
+            d->points[i].pos = p + diff * scaling;
         }
     }
 }
@@ -96,12 +95,12 @@ void descend(struct data *d, v2d *delta) {
     d = __builtin_assume_aligned(d, 16);
     d->total_lagr_sum = 0.0;
 
-    struct pt_vel *cur_pt = &d->points[1].pv;
+    union point *cur_pt = &d->points[1];
     double cur_part_xp = lagr_partial_xp_with_side_eff(cur_pt, &d->total_lagr_sum);
     double cur_part_zp = lagr_partial_zp(cur_pt);
 
     for (int i = 0; i < POINTS-2; i++) {
-        struct pt_vel *next_pt = &d->points[i+2].pv;
+        union point *next_pt = &d->points[i+2];
         double next_part_xp = lagr_partial_xp_with_side_eff(next_pt, &d->total_lagr_sum),
                next_part_zp = lagr_partial_zp(next_pt);
         delta[i][0] = lagr_partial_x(cur_pt) - (next_part_xp - cur_part_xp) * POINTS;
@@ -120,9 +119,9 @@ void renormalize(struct data *d, v2d *renorm_w) {
     double arclength[POINTS-1],
            tot_arclength = 0.0;
 
-    v2d last_pt = points[0].v.pos;
+    v2d last_pt = points[0].pos;
     for (int i = 1; i < POINTS; i++) {
-        v2d current_pt = points[i].v.pos;
+        v2d current_pt = points[i].pos;
         tot_arclength += (
             arclength[i-1] = fast_hypot_v(current_pt - last_pt)
         );
@@ -134,14 +133,12 @@ void renormalize(struct data *d, v2d *renorm_w) {
     double ref = 0.0;
 
     for (int j = 0; j < POINTS-1; j++) {
-        v2d w = points[j].v.pos, wn = points[j+1].v.pos;
+        v2d w = points[j].pos, wn = points[j+1].pos;
         double scale = 1.0 / arclength[j];
         double along = (ref - arclength_so_far) * scale;
         while (along <= 1.0) {
-            v2d u = {1 - along, 1 - along};
-            v2d v = {along, along};
             // we need to add a point at the next step
-            renorm_w[i] = u * w + v * wn;
+            renorm_w[i] = (1 - along) * w + along * wn;
             i++;
             double inc = tot_arclength / (POINTS-1);
             ref += inc;
@@ -153,7 +150,7 @@ void renormalize(struct data *d, v2d *renorm_w) {
 
     if (i == POINTS-1) {
         // add last point if necessary
-        renorm_w[i] = points[i].v.pos;
+        renorm_w[i] = points[i].pos;
     } else if (i != POINTS) {
         printf("Renorm only added %d points!\n", i);
         exit(1);
@@ -161,7 +158,7 @@ void renormalize(struct data *d, v2d *renorm_w) {
 
     // update p
     for (int i = 0; i < POINTS; i++) {
-        points[i].v.pos = renorm_w[i];
+        points[i].pos = renorm_w[i];
     }
 }
 
@@ -248,8 +245,8 @@ void optimize(
 
     for (int j = 0; j < mem.next; j++) {
         for (int i = 0; i < POINTS; i++) {
-            struct pt p = mem.pts[j * POINTS + i];
-            fprintf(f, "%f,%f\n", p.x, p.z);
+            v2d p = mem.pts[j * POINTS + i];
+            fprintf(f, "%f,%f\n", p[0], p[1]);
         }
         fprintf(f, "\n");
     }
@@ -257,8 +254,8 @@ void optimize(
     free_memory(&mem);
 
     for (int i = 0; i < POINTS; i++) {
-        struct pt p = d->points[i].p;
-        fprintf(f, "%f,%f\n", p.x, p.z);
+        v2d p = d->points[i].pos;
+        fprintf(f, "%f,%f\n", p[0], p[1]);
     }
 
     fclose(f);

@@ -199,7 +199,7 @@ double soft_excess(double t, double mx) {
     return exc * exc;
 }
 
-double compute_lagrangian_(struct pt_vel *pt) {
+double compute_lagrangian_(union point *pt) {
     pt = __builtin_assume_aligned(pt, 16);
     double x = pt->x, z = pt->z, xp = pt->xp, zp = pt->zp, xpp = pt->xpp, zpp = pt->zpp;
     struct autodiff norm = hypot_xz(x, z), speed_norm = hypot_xpzp(xp, zp);
@@ -239,7 +239,7 @@ double compute_lagrangian_(struct pt_vel *pt) {
     return lagrangian;
 }
 
-double compute_lagrangian(struct pt_vel *pt) {
+double compute_lagrangian(union point *pt) {
     pt = __builtin_assume_aligned(pt, 16);
     double x = pt->x, z = pt->z, xp = pt->xp, zp = pt->zp, xpp = pt->xpp, zpp = pt->zpp;
     struct autodiff norm = hypot_xz(x, z), speed_norm = hypot_xpzp(xp, zp);
@@ -280,7 +280,7 @@ double time_integrand_alone(v2d pos, v2d vel) {
     return fabs(xp / (S * sin_theta + whirl_x));
 }
 
-double compute_lagrangian_and_set_time_integrand(struct pt_vel *pt, double *time_integrand_out) {
+double compute_lagrangian_and_set_time_integrand(union point *pt, double *time_integrand_out) {
     pt = __builtin_assume_aligned(pt, 16);
     double x = pt->x, z = pt->z, xp = pt->xp, zp = pt->zp, xpp = pt->xpp, zpp = pt->zpp;
     struct autodiff norm = hypot_xz(x, z), speed_norm = hypot_xpzp(xp, zp);
@@ -323,7 +323,7 @@ LAGR_PARTIAL(z)
 LAGR_PARTIAL(xp)
 LAGR_PARTIAL(zp)
 
-double lagr_partial_xp_with_side_eff(struct pt_vel *pt, double *objective) {
+double lagr_partial_xp_with_side_eff(union point *pt, double *objective) {
     double time_int_up, time_int_down,
            lagr_up, lagr_down;
     double orig = pt->xp;
