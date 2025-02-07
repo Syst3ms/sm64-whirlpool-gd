@@ -60,24 +60,9 @@ double fast_hypot_v(v2d v) {
     return sqrt(v[0] * v[0] + v[1] * v[1]);
 }
 
-v2d vabs(v2d x) {
+v2d vabs_(v2d x) {
     v2d mask = {-0.0, -0.0};
     return _mm_andnot_pd(mask, x);
-}
-
-// checks if the sign of x and y is different using bitwise manipulation
-int is_sign_same(double x, double y) {
-    union {
-        unsigned long long l;
-        double d;
-    } a, b;
-    a.d = x;
-    b.d = y;
-    return (a.l ^ b.l) >> 63 == 0;
-}
-
-double move_towards(double base, double direction, double amount) {
-    return base + copysign(amount, direction - base);
 }
 
 void update_and_apply_momentum(
@@ -90,9 +75,17 @@ void update_and_apply_momentum(
         v2d del = delta[i];
         struct mom_point mp = mom->points[i];
         v2d m = mom->points[i].xz = BETA_1 * mp.xz + (1 - BETA_1) * del;
-        v2d u = mom->points[i].ut = _mm_max_pd(mp.ut * BETA_2, vabs(del));
+        v2d u = mom->points[i].ut = _mm_max_pd(mp.ut * BETA_2, vabs_(del));
         d->points[i+1].v.pos -= eps * m / u;
     }
+}
+
+double objective(struct data *d) {
+    double sum = 0.0;
+    for (int i = 1; i < POINTS; i++) {
+        sum += compute_lagrangian(&d->points[i].pv);
+    }
+    return sum / (POINTS-1);
 }
 
 void recompute_dependent(struct data *d) {
