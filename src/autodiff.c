@@ -6,6 +6,7 @@
 
 #include "autodiff.h"
 #include "old_compute.h"
+#include "math_funcs.h"
 #include "parameters.h"
 #include "types.h"
 #include "util.h"
@@ -199,6 +200,7 @@ double soft_excess(double t, double mx) {
     return exc * exc;
 }
 
+/*
 double compute_lagrangian_(union point *pt) {
     pt = __builtin_assume_aligned(pt, 16);
     double x = pt->x, z = pt->z, xp = pt->xp, zp = pt->zp, xpp = pt->xpp, zpp = pt->zpp;
@@ -238,8 +240,9 @@ double compute_lagrangian_(union point *pt) {
 
     return lagrangian;
 }
+*/
 
-double compute_lagrangian(union point *pt) {
+double compute_lagrangian(union point *pt, double penalty_fac) {
     pt = __builtin_assume_aligned(pt, 16);
     double x = pt->x, z = pt->z, xp = pt->xp, zp = pt->zp, xpp = pt->xpp, zpp = pt->zpp;
     struct autodiff norm = hypot_xz(x, z), speed_norm = hypot_xpzp(xp, zp);
@@ -259,10 +262,9 @@ double compute_lagrangian(union point *pt) {
     );
     double theta_p = xp * theta.dx + zp * theta.dz + xpp * theta.dxp + zpp * theta.dzp;
     double time_integrand = fabs(xp / (S * sin(theta.v) + whirl_x_no_fac.v * fac.v));
-    double penalty_term = soft_excess(fabs(theta_p) / time_integrand, MAX_YAW_SPEED);
-    double lagrangian = time_integrand + PENALTY_FACTOR * penalty_term;
+    double excess = square(fmax(square(theta_p / time_integrand) - MAX_YAW_SPEED_SQUARED, 0));
 
-    return lagrangian;
+    return time_integrand + penalty_fac * excess;
 }
 
 double time_integrand_alone(v2d pos, v2d vel) {
@@ -280,40 +282,14 @@ double time_integrand_alone(v2d pos, v2d vel) {
     return fabs(xp / (S * sin_theta + whirl_x));
 }
 
-double compute_lagrangian_and_set_time_integrand(union point *pt, double *time_integrand_out) {
-    pt = __builtin_assume_aligned(pt, 16);
-    double x = pt->x, z = pt->z, xp = pt->xp, zp = pt->zp, xpp = pt->xpp, zpp = pt->zpp;
-    struct autodiff norm = hypot_xz(x, z), speed_norm = hypot_xpzp(xp, zp);
-    struct autodiff yaw_offset = scalar_div_ad(- M_PI * 250.0, add_scalar_ad(norm, 1000.0));
-    struct autodiff sin_o, cos_o;
-    sincos_ad(yaw_offset, &sin_o, &cos_o);
-    struct autodiff fac = add_scalar_ad(scalar_div_ad(-20.0, norm), 0.01);
-    struct autodiff whirl_x_no_fac = dot_xz_ad(cos_o, sin_o, x, z),
-                    whirl_z_no_fac = dot_nx_z_ad(sin_o, cos_o, x, z);
-    struct autodiff det = mul_ad(
-        dot_nxp_zp_ad(whirl_z_no_fac, whirl_x_no_fac, xp, zp),
-        fac
-    );
-    struct autodiff theta = sub_ad(
-        acos_ad(div_ad(det, mul_scalar_ad(speed_norm, S))),
-        atan2_zpxp_ad(xp, zp)
-    );
-    double theta_p = xp * theta.dx + zp * theta.dz + xpp * theta.dxp + zpp * theta.dzp;
-    double time_integrand = fabs(xp / (S * sin(theta.v) + whirl_x_no_fac.v * fac.v));
-    double penalty_term = soft_excess(fabs(theta_p) / time_integrand, MAX_YAW_SPEED);
-
-    *time_integrand_out = time_integrand;
-    return time_integrand + PENALTY_FACTOR * penalty_term;
-}
-
 #define LAGR_PARTIAL(var)\
     LAGR_PARTIAL_HEADER(var) {\
         double orig = pt->var;\
         pt->var *= D_FAC_UP;\
-        double lagr_up = compute_lagrangian(pt);\
+        double lagr_up = compute_lagrangian(pt, penalty_fac);\
         pt->var = orig;\
         pt->var *= D_FAC_DOWN;\
-        double lagr_down = compute_lagrangian(pt);\
+        double lagr_down = compute_lagrangian(pt, penalty_fac);\
         pt->var = orig;\
         return (lagr_up - lagr_down) / (2 * D_EPS * orig);\
     }\
@@ -322,22 +298,3 @@ LAGR_PARTIAL(x)
 LAGR_PARTIAL(z)
 LAGR_PARTIAL(xp)
 LAGR_PARTIAL(zp)
-
-double lagr_partial_xp_with_side_eff(union point *pt, double *objective) {
-    double time_int_up, time_int_down,
-           lagr_up, lagr_down;
-    double orig = pt->xp;
-
-    pt->xp *= D_FAC_UP;
-    lagr_up = compute_lagrangian_and_set_time_integrand(pt, &time_int_up);
-    pt->xp = orig;
-
-    pt->xp *= D_FAC_DOWN;
-    lagr_down = compute_lagrangian_and_set_time_integrand(pt, &time_int_down);
-    pt->xp = orig;
-
-    pt->time_integrand = (time_int_up + time_int_down) / 2;
-    *objective += (lagr_up + lagr_down) / 2;
-
-    return (lagr_up - lagr_down) / (2 * D_EPS * orig);
-}
