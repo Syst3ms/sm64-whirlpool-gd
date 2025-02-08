@@ -2,12 +2,27 @@
 
 #include <float.h>
 #include <math.h>
+#include <stddef.h>
 
 #include "parameters.h"
 #include "util.h"
 #include "math_funcs.h"
 
 #define D_EPS cbrt(DBL_EPSILON) 
+
+v2d dot(v2d *a, v2d *b, size_t len) {
+    v2d res = {};
+
+    for (size_t i = 0; i < len; i++) {
+        res += a[i] * b[i];
+    }
+
+    return res;
+}
+
+double square(double x) {
+    return x * x;
+}
 
 // the angle that mario should have to follow the path
 double theta(v2d pos, v2d vel) {

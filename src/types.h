@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdalign.h>
+#include <stddef.h>
 
 #include "parameters.h"
 
@@ -15,9 +16,12 @@ union point {
     };
 };
 
+struct penalty_data {
+    double rho;
+};
+
 struct data {
     union point points[POINTS];
-    double total_lagr_sum;
 };
 
 struct mom_point {
@@ -34,11 +38,11 @@ struct hitbox {
 };
 
 struct hitboxes {
-    int num_hb;
+    size_t num_hb;
     struct hitbox hb[];
 };
 
-struct memory {
-    int size, next;
+struct history {
+    size_t size, next;
     v2d *pts;
 };

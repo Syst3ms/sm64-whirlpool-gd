@@ -18,7 +18,7 @@ void output_resampled(int length, v2d *p, double *yaws) {
     }
 
     fprintf(f, "x,z,yaw,yaw_diff\n");
-    unsigned short prev_au = 0;
+    unsigned short prev_au = radians_to_au(yaws[0]);
     for (int i = 0; i < length; i++) {
         unsigned short cur = radians_to_au(yaws[i]);
         short diff = cur - prev_au;
