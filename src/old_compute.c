@@ -4,8 +4,6 @@
 #include <math.h>
 
 #include "parameters.h"
-#include "util.h"
-#include "math_funcs.h"
 
 #define D_EPS cbrt(DBL_EPSILON) 
 

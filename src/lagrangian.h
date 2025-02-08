@@ -17,3 +17,5 @@ void compute_lagrangian_and_constraint(
 );
 double objective_from_positions(v2d *inter_pos, v2d start, v2d end, double penalty_fac);
 double time_integrand_alone(v2d pos, v2d vel);
+double theta(v2d pos, v2d vel);
+double real_speed_norm(v2d pos, v2d vel);

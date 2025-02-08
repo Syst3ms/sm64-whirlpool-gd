@@ -1,6 +1,5 @@
 #define _USE_MATH_DEFINES
 
-#include <errno.h>
 #include <float.h>
 #include <limits.h>
 #include <math.h>
@@ -9,11 +8,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "autodiff.h"
-#include "math_funcs.h"
+#include "lagrangian.h"
 #include "parameters.h"
 #include "renormalization.h"
-#include "util.h"
+#include "util/data.h"
+#include "util/math.h"
+#include "util/memory.h"
 
 void init_path(
     struct data *d,

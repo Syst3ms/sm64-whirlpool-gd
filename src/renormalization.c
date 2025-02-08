@@ -5,8 +5,9 @@
 #include <errno.h>
 
 #include "parameters.h"
-#include "util.h"
-#include "math_funcs.h"
+#include "util/math.h"
+#include "util/memory.h"
+#include "lagrangian.h"
 
 #define TIME_PER_FRAME 1
 
@@ -52,24 +53,6 @@ void find_resampled(v2d ref, v2d first, v2d second, double target_length, v2d *r
 
     double fac = (-dp + sqrt(dp * dp + snv * (target_length * target_length - snw))) / snv;
     *res = (1-fac) * first + fac * second;
-}
-
-void * _mm_realloc(void *aligned_ptr, size_t size, size_t align)
-{
-  void *malloc_ptr = ((void**) aligned_ptr)[-1];
-
-  malloc_ptr = realloc(malloc_ptr, size + align);
-  if (!malloc_ptr)
-    return ((void *) 0);
-
-  /* Align  We have at least sizeof (void *) space below malloc'd ptr. */
-  aligned_ptr = (void *) (((size_t) malloc_ptr + align)
-			  & ~((size_t) (align) - 1));
-
-  /* Store the original pointer just before p.  */	
-  ((void **) aligned_ptr) [-1] = malloc_ptr;
-
-  return aligned_ptr;
 }
 
 v2d * inc_and_realloc_if_necessary(int *i, int *cap, v2d **arr) {

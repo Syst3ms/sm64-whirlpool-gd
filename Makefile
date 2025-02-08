@@ -8,8 +8,8 @@ SRCDIR := ./src
 SRC_PAT := $(SRCDIR)/%.c
 OBJ_PAT := $(BUILDDIR)/%.o
 
-SRCS := $(wildcard $(SRCDIR)/*.c)
-OBJS := $(SRCS:$(SRC_PAT)=$(OBJ_PAT))
+SRCS := $(shell find $(SOURCEDIR) -name '*.c')
+OBJS := $(subst $(SRCDIR),$(BUILDDIR),$(SRCS:.c=.o))
 DEPS := $(OBJS:.o=.d)
 
 .PHONY: run_and_plot plot run build clean assembly
@@ -28,11 +28,11 @@ build: $(OBJS)
 debug: OFLAGS = -g
 debug: build
 
-$(OBJ_PAT): $(SRC_PAT)
+build/%.o: src/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(OFLAGS) -o $@ -c $<
 
 clean:
-	rm -f *.exe $(BUILDDIR)/*
+	rm -rf ./*.exe $(BUILDDIR)/*
 	
 -include $(DEPS)
