@@ -17,11 +17,13 @@ union point {
 };
 
 struct penalty_data {
+    double shift[POINTS-2];
     double rho;
 };
 
 struct data {
     union point points[POINTS];
+    double constraint[POINTS-2];
 };
 
 struct mom_point {

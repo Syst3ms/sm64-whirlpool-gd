@@ -98,25 +98,29 @@ void compute_gradient(struct data *d, struct penalty_data *pdata, v2d *delta) {
 
     union point *cur_pt = &d->points[1];
     double pfac = pdata->rho / 2.0;
-    double cur_part_xp = lagr_partial_xp(cur_pt, pfac);
-    double cur_part_zp = lagr_partial_zp(cur_pt, pfac);
+    double cur_shift = pdata->shift[0] / pdata->rho;
+    double cur_part_xp = lagr_partial_xp(cur_pt, pfac, cur_shift);
+    double cur_part_zp = lagr_partial_zp(cur_pt, pfac, cur_shift);
 
     for (size_t i = 0; i < POINTS-3; i++) {
         union point *next_pt = &d->points[i+2];
-        double next_part_xp = lagr_partial_xp(next_pt, pfac),
-               next_part_zp = lagr_partial_zp(next_pt, pfac);
-        delta[i][0] = lagr_partial_x(cur_pt, pfac) - (next_part_xp - cur_part_xp) * POINTS;
-        delta[i][1] = lagr_partial_z(cur_pt, pfac) - (next_part_zp - cur_part_zp) * POINTS;
+        double next_shift = pdata->shift[i+1] / pdata->rho;
+        double next_part_xp = lagr_partial_xp(next_pt, pfac, next_shift),
+               next_part_zp = lagr_partial_zp(next_pt, pfac, next_shift);
+        delta[i][0] = lagr_partial_x(cur_pt, pfac, cur_shift) - (next_part_xp - cur_part_xp) * POINTS;
+        delta[i][1] = lagr_partial_z(cur_pt, pfac, cur_shift) - (next_part_zp - cur_part_zp) * POINTS;
         cur_pt = next_pt;
         cur_part_xp = next_part_xp;
         cur_part_zp = next_part_zp;
+        cur_shift = next_shift;
     }
 
     union point *next_pt = &d->points[POINTS-1];
-    double next_part_xp = lagr_partial_xp(next_pt, pfac),
-            next_part_zp = lagr_partial_zp(next_pt, pfac);
-    delta[POINTS-3][0] = lagr_partial_x(cur_pt, pfac) - (next_part_xp - cur_part_xp) * POINTS;
-    delta[POINTS-3][1] = lagr_partial_z(cur_pt, pfac) - (next_part_zp - cur_part_zp) * POINTS;
+    double next_shift = pdata->shift[POINTS-3] / pdata->rho;
+    double next_part_xp = lagr_partial_xp(next_pt, pfac, next_shift),
+            next_part_zp = lagr_partial_zp(next_pt, pfac, next_shift);
+    delta[POINTS-3][0] = lagr_partial_x(cur_pt, pfac, cur_shift) - (next_part_xp - cur_part_xp) * POINTS;
+    delta[POINTS-3][1] = lagr_partial_z(cur_pt, pfac, cur_shift) - (next_part_zp - cur_part_zp) * POINTS;
 }
 
 void renormalize(struct data *d, v2d *renorm_w) {
@@ -186,14 +190,14 @@ void optimize_unconstrained(
     v2d renorm_w[POINTS];
     v2d grad[POINTS-2];
 
-    double obj = objective(d, pdata),
+    double obj = compute_obj_and_constraint_info(d, pdata),
           best_obj = obj;
     size_t iters = 0;
     size_t iters_since_last_best = 0;
 
     while (iters <= max_iters && iters_since_last_best < max_iters_without_change) {
         if (iters++ % MEM_STORE_RATE == 0) {
-            //printf("%d: %f (current), %f (best)\n", iters, obj, best_obj);
+            printf("%d: %f (current), %f (best)\n", iters, obj, best_obj);
             store_into_history(d, hist);
         }
 
@@ -207,7 +211,7 @@ void optimize_unconstrained(
 
         recompute_dependent(d);
 
-        obj = objective(d, pdata);
+        obj = compute_obj_and_constraint_info(d, pdata);
 
         if (obj < best_obj) {
             iters_since_last_best = 0;
@@ -267,13 +271,32 @@ int main(void) {
     struct history hist = init_history(1000);
 
     struct penalty_data pdata = {};
-    double rho = 1.0;
+    double rho = 100.0;
+    double eps = 1.0;
+    double prev_v_norm;
+    char first = 1;
+
+    printf("Starting with rho = %f, eps = %f\n", rho, eps);
 
     while (rho < 10000.0) {
         pdata.rho = rho;
-        printf("Rho: %f\n", pdata.rho);
-        optimize_unconstrained(&d, &pdata, &hist, hitboxes, 0.1, INT_MAX, 15000);
-        rho *= 1.2;
+        optimize_unconstrained(&d, &pdata, &hist, hitboxes, eps, INT_MAX, 30000);
+
+        double v_norm = 0.0;
+        for (size_t i = 0; i < POINTS-2; i++) {
+            v_norm += fabs(fmin(-d.constraint[i], pdata.shift[i] / rho));
+            pdata.shift[i] = fmin(fmax(pdata.shift[i] + rho * d.constraint[i], 0), MAX_SHIFT);
+        }
+
+        if (first) {
+            first = 0;
+        } else if (v_norm > MIN_CONSTRAINT_PROGRESS * prev_v_norm) {
+            puts("Not enough constraint progress");
+            rho *= CONSTRAINT_UPSCALE;
+            eps *= EPS_DOWNSCALE;
+            printf("Rho: %f, eps: %f\n", rho, eps);
+        }
+        prev_v_norm = v_norm;
     }
 
     puts("Writing to file...");

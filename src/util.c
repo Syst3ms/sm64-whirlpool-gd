@@ -80,10 +80,16 @@ void update_and_apply_momentum(
     }
 }
 
-double objective(struct data *d, struct penalty_data *pdata) {
+double compute_obj_and_constraint_info(struct data *d, struct penalty_data *pdata) {
+    double sum = 0.0;
     double sum = 0.0;
     for (size_t i = 1; i < POINTS; i++) {
-        sum += compute_lagrangian(&d->points[i], pdata->rho / 2.0);
+        double lagr;
+        compute_lagrangian_and_constraint(
+            &d->points[i], pdata->rho / 2.0, pdata->shift[i-1],
+            &lagr, &d->constraint[i-1]
+        );
+        sum += lagr;
     }
     return sum / (POINTS-1);
 }

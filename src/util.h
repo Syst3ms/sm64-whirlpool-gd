@@ -16,5 +16,5 @@ void update_and_apply_momentum(
     double eps
 );
 
-double objective(struct data *d, struct penalty_data *pdata);
+double compute_obj_and_constraint_info(struct data *d, struct penalty_data *pdata);
 void recompute_dependent(struct data *d);

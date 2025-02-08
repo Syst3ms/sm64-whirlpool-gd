@@ -200,6 +200,11 @@ double soft_excess(double t, double mx) {
     return exc * exc;
 }
 
+double penalty_excess(double x, double max_x, double shift) {
+    double exc = fmax(x - max_x + shift, 0);
+    return exc * exc;
+}
+
 /*
 double compute_lagrangian_(union point *pt) {
     pt = __builtin_assume_aligned(pt, 16);
@@ -242,7 +247,7 @@ double compute_lagrangian_(union point *pt) {
 }
 */
 
-double compute_lagrangian(union point *pt, double penalty_fac) {
+double compute_lagrangian(union point *pt, double penalty_fac, double shift) {
     pt = __builtin_assume_aligned(pt, 16);
     double x = pt->x, z = pt->z, xp = pt->xp, zp = pt->zp, xpp = pt->xpp, zpp = pt->zpp;
     struct autodiff norm = hypot_xz(x, z), speed_norm = hypot_xpzp(xp, zp);
@@ -262,9 +267,39 @@ double compute_lagrangian(union point *pt, double penalty_fac) {
     );
     double theta_p = xp * theta.dx + zp * theta.dz + xpp * theta.dxp + zpp * theta.dzp;
     double time_integrand = fabs(xp / (S * sin(theta.v) + whirl_x_no_fac.v * fac.v));
-    double excess = square(fmax(square(theta_p / time_integrand) - MAX_YAW_SPEED_SQUARED, 0));
+    double excess = square(
+        fmax(square(theta_p / time_integrand) - MAX_YAW_SPEED_SQUARED + shift, 0)
+    );
 
     return time_integrand + penalty_fac * excess;
+}
+
+void compute_lagrangian_and_constraint(
+    union point *pt, double penalty_fac, double shift,
+    double *lagr_out, double *constraint_out
+) {
+    pt = __builtin_assume_aligned(pt, 16);
+    double x = pt->x, z = pt->z, xp = pt->xp, zp = pt->zp, xpp = pt->xpp, zpp = pt->zpp;
+    struct autodiff norm = hypot_xz(x, z), speed_norm = hypot_xpzp(xp, zp);
+    struct autodiff yaw_offset = scalar_div_ad(- M_PI * 250.0, add_scalar_ad(norm, 1000.0));
+    struct autodiff sin_o, cos_o;
+    sincos_ad(yaw_offset, &sin_o, &cos_o);
+    struct autodiff fac = add_scalar_ad(scalar_div_ad(-20.0, norm), 0.01);
+    struct autodiff whirl_x_no_fac = dot_xz_ad(cos_o, sin_o, x, z),
+                    whirl_z_no_fac = dot_nx_z_ad(sin_o, cos_o, x, z);
+    struct autodiff det = mul_ad(
+        dot_nxp_zp_ad(whirl_z_no_fac, whirl_x_no_fac, xp, zp),
+        fac
+    );
+    struct autodiff theta = sub_ad(
+        acos_ad(div_ad(det, mul_scalar_ad(speed_norm, S))),
+        atan2_zpxp_ad(xp, zp)
+    );
+    double theta_p = xp * theta.dx + zp * theta.dz + xpp * theta.dxp + zpp * theta.dzp;
+    double time_integrand = fabs(xp / (S * sin(theta.v) + whirl_x_no_fac.v * fac.v));
+
+    *constraint_out = square(theta_p / time_integrand) - MAX_YAW_SPEED_SQUARED;
+    *lagr_out = time_integrand + penalty_fac * square(fmax(*constraint_out + shift, 0));
 }
 
 double time_integrand_alone(v2d pos, v2d vel) {
@@ -286,10 +321,10 @@ double time_integrand_alone(v2d pos, v2d vel) {
     LAGR_PARTIAL_HEADER(var) {\
         double orig = pt->var;\
         pt->var *= D_FAC_UP;\
-        double lagr_up = compute_lagrangian(pt, penalty_fac);\
+        double lagr_up = compute_lagrangian(pt, penalty_fac, shift);\
         pt->var = orig;\
         pt->var *= D_FAC_DOWN;\
-        double lagr_down = compute_lagrangian(pt, penalty_fac);\
+        double lagr_down = compute_lagrangian(pt, penalty_fac, shift);\
         pt->var = orig;\
         return (lagr_up - lagr_down) / (2 * D_EPS * orig);\
     }\
