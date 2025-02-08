@@ -1,6 +1,6 @@
 #pragma once
 
-#include "types.h"
+#include "../types.h"
 
 struct history init_history(size_t initial_size);
 void store_into_history(struct data *d, struct history *mem);
