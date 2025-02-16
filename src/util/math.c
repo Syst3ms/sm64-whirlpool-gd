@@ -22,6 +22,17 @@ v2d vabs(v2d x) {
     return _mm_andnot_pd(mask, x);
 }
 
+v2d v2d_of(double a, double b) {
+    v2d ret = {a, b};
+    return ret;
+}
+
+v2d ortho(v2d a) {
+    v2d ret = {a[1], a[0]};
+    v2d mask = {0.0, -0.0};
+    return _mm_xor_pd(ret, mask);
+}
+
 double square(double x) {
     return x * x;
 }

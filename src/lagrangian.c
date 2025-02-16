@@ -326,12 +326,35 @@ double time_integrand_alone(v2d pos, v2d vel) {
         double lagr_down = compute_lagrangian(pt, penalty_fac, shift);\
         pt->var = orig;\
         return (lagr_up - lagr_down) / (2 * D_EPS * orig);\
+    }
+
+#define LAGR_PARTIAL_WITH_CHECK(var)\
+    LAGR_PARTIAL_HEADER(var) {\
+        double orig = pt->var;\
+        if (orig != 0.0) {\
+            pt->var *= D_FAC_UP;\
+            double lagr_up = compute_lagrangian(pt, penalty_fac, shift);\
+            pt->var = orig;\
+            pt->var *= D_FAC_DOWN;\
+            double lagr_down = compute_lagrangian(pt, penalty_fac, shift);\
+            pt->var = orig;\
+            return (lagr_up - lagr_down) / (2 * D_EPS * orig);\
+        } else {\
+            pt->var = D_EPS;\
+            double lagr_up = compute_lagrangian(pt, penalty_fac, shift);\
+            pt->var = -D_EPS;\
+            double lagr_down = compute_lagrangian(pt, penalty_fac, shift);\
+            pt->var = 0.0;\
+            return (lagr_up - lagr_down) / (2 * D_EPS);\
+        }\
     }\
 
 LAGR_PARTIAL(x)
 LAGR_PARTIAL(z)
 LAGR_PARTIAL(xp)
 LAGR_PARTIAL(zp)
+LAGR_PARTIAL_WITH_CHECK(xpp)
+LAGR_PARTIAL_WITH_CHECK(zpp)
 
 double real_speed_norm(v2d pos, v2d vel) {
     double x = pos[0], z = pos[1], xp = vel[0], zp = vel[1];

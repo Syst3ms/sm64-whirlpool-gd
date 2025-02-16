@@ -1,3 +1,5 @@
+#define _USE_MATH_DEFINES
+
 #include <stdlib.h>
 #include <mm_malloc.h>
 #include <stdio.h>
@@ -10,6 +12,109 @@
 #include "lagrangian.h"
 
 #define TIME_PER_FRAME 1
+
+// tweak the path so that the yaw velocity doesn't exceed its maximum
+void smooth_out(struct data *d) {
+    v2d end = d->points[POINTS-1].pos;
+    v2d prev_pos = d->points[0].pos;
+    double prev_theta = theta(d->points[0].pos, d->points[0].vel);
+    v2d pos = d->points[1].pos;
+    v2d vel = d->points[1].vel;
+
+    for (int i = 1; i < POINTS-1; i++) {
+        v2d next_pos = d->points[i+1].pos;
+
+        double cur_theta;
+        double max_range = OVERSMOOTH_FACTOR * theta_maxrange(pos, vel, &cur_theta);
+        double angle_diff = remainder_2pi(prev_theta - cur_theta);
+
+        if (fabs(angle_diff) < max_range) {
+            goto found_theta;
+        }
+
+        /*
+         * max yaw speed exceeded, now try to move 'pos' along a perpendicular
+         * bisector between 'prev_pos' and 'next_pos'
+         */
+        v2d towards_next = (next_pos - prev_pos) / 2.0;
+        v2d normal = ortho(towards_next);
+
+        double target_side;
+        v2d pos_a, pos_b = prev_pos + towards_next;
+        double diff_a, diff_b;
+
+        {
+            v2d vel_b = towards_next * POINTS;
+
+            double theta_b;
+            double maxrange_b = OVERSMOOTH_FACTOR * theta_maxrange(pos_b, vel_b, &theta_b);
+
+            double tmpdiff = remainder_2pi(prev_theta - theta_b);
+            diff_b = tmpdiff - copysign(maxrange_b, tmpdiff);
+            target_side = -tmpdiff;
+            
+            if (fabs(diff_b) < ONE_HAU) {
+                pos = pos_b;
+                cur_theta = theta_b;
+                goto found_theta;
+            }
+        }
+
+        // we want to target the side of the admissible range closest to our initial value
+        // this should only be used for its sign
+        // 'normal' is oriented such that this points the right way
+        v2d bracket_step = normal * diff_b;
+
+        do {
+            pos_a = pos_b;
+            diff_a = diff_b;
+            pos_b += bracket_step;
+
+            v2d vel_b = (pos_b - prev_pos) * POINTS;
+
+            double theta_b;
+            double maxrange_b = OVERSMOOTH_FACTOR * theta_maxrange(pos_b, vel_b, &theta_b);
+
+            diff_b = remainder_2pi(prev_theta - theta_b + copysign(maxrange_b, target_side));
+
+            if (fabs(diff_b) < ONE_HAU) {
+                pos = pos_b;
+                cur_theta = theta_b;
+                goto found_theta;
+            }
+        } while (is_sign_same(diff_a, diff_b));
+
+        double diff;
+
+        // false position method, run actual search
+        do {
+            pos = (pos_a * diff_b - pos_b * diff_a) / (diff_b - diff_a);
+            vel = (pos - prev_pos) * POINTS;
+
+            max_range = OVERSMOOTH_FACTOR * theta_maxrange(pos, vel, &cur_theta);
+
+            diff = remainder(prev_theta - cur_theta + copysign(max_range, target_side), 2*M_PI);
+
+            if (is_sign_same(diff, diff_a)) {
+                pos_a = pos;
+                diff_a = diff;
+            } else {
+                pos_b = pos;
+                diff_b = diff;
+            }
+        } while (fabs(diff) >= ONE_HAU);
+
+        found_theta:
+        d->points[i].pos = pos;
+        // don't adjust anything else as we don't need it for the rest of the iteration
+        // and it will be recomputed in due time from the positions
+
+        prev_pos = pos;
+        prev_theta = cur_theta;
+        pos = next_pos;
+        vel = (pos - prev_pos) * POINTS;
+    }
+}
 
 void output_resampled(int length, v2d *p, double *yaws) {
     FILE *f = fopen(".\\resampled.txt", "w");

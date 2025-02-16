@@ -20,6 +20,15 @@ void update_and_apply_momentum(
     }
 }
 
+double objective(struct data *d, struct penalty_data *pdata) {
+    double pfac = pdata->rho / 2.0;
+    double sum = 0.0;
+    for (size_t i = 1; i < POINTS-1; i++) {
+        sum += compute_lagrangian(&d->points[i], pfac, pdata->shift[i] / pdata->rho);
+    }
+    return sum / (POINTS-1);
+}
+
 double compute_obj_and_constraint_info(struct data *d, struct penalty_data *pdata) {
     double sum = 0.0;
     for (size_t i = 1; i < POINTS-1; i++) {
@@ -34,17 +43,23 @@ double compute_obj_and_constraint_info(struct data *d, struct penalty_data *pdat
 }
 
 void recompute_dependent(struct data *d) {
-    for (size_t i = 1; i < POINTS; i++) {
-        d->points[i].vel = (d->points[i].pos - d->points[i-1].pos) * POINTS;
-    }
-    d->points[0].vel = d->points[1].vel;
+    v2d prev_pos = d->points[0].pos,
+        cur_pos = d->points[1].pos,
+        next_pos = d->points[2].pos;
 
-    for (size_t i = 1; i < POINTS-1; i++) {
-        d->points[i].acc = (d->points[i+1].vel - d->points[i].vel) * POINTS;
+    d->points[0].vel = (4.0 * cur_pos - 3.0 * prev_pos - next_pos) * POINTS / 2.0;
+    d->points[0].acc = (prev_pos + next_pos - 2.0 * cur_pos) * POINTS * POINTS;
+
+    for (size_t i = 1; i < POINTS-2; i++) {
+        d->points[i].vel = (next_pos - prev_pos) * POINTS / 2.0;
+        d->points[i].acc = (prev_pos + next_pos - 2.0 * cur_pos) * POINTS * POINTS;
+
+        prev_pos = cur_pos;
+        cur_pos = next_pos;
+        next_pos = d->points[i+2].pos;
     }
-    
-    // zero-pad, maybe same-pad is better?
-    v2d zero = {0.0, 0.0};
-    d->points[POINTS-1].acc = zero;
+
+    d->points[POINTS-2].vel = (next_pos - prev_pos) * POINTS / 2.0;
+    d->points[POINTS-1].vel = (prev_pos + 3.0 * next_pos - 4.0 * cur_pos) * POINTS / 2.0;
+    d->points[POINTS-1].acc = d->points[POINTS-2].acc = (prev_pos + next_pos - 2.0 * cur_pos) * POINTS * POINTS;
 }
-

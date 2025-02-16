@@ -93,34 +93,45 @@ void push_out_of_hitboxes(
     }
 }
 
-void compute_gradient(struct data *d, struct penalty_data *pdata, v2d *delta) {
-    d = __builtin_assume_aligned(d, 16);
+void compute_gradient(struct data *d, struct penalty_data *pdata, v2d *grad) {
+    double rho = pdata->rho;
+    double pfac = rho / 2.0;
+    union point *prev_pt = &d->points[0],
+                *cur_pt = &d->points[1],
+                *next_pt = &d->points[2];
+    double prev_shift = pdata->shift[0],
+           cur_shift = pdata->shift[1],
+           next_shift = pdata->shift[2];
+    v2d prev_p = {lagr_partial_xp(prev_pt, pfac, prev_shift), lagr_partial_zp(prev_pt, pfac, prev_shift)},
+        cur_p = {lagr_partial_xp(cur_pt, pfac, cur_shift), lagr_partial_zp(cur_pt, pfac, cur_shift)},
+        next_p = {lagr_partial_xp(next_pt, pfac, next_shift), lagr_partial_zp(next_pt, pfac, next_shift)};
+    v2d prev_pp = {lagr_partial_xpp(prev_pt, pfac, prev_shift), lagr_partial_zpp(prev_pt, pfac, prev_shift)},
+        cur_pp = {lagr_partial_xpp(cur_pt, pfac, cur_shift), lagr_partial_zpp(cur_pt, pfac, cur_shift)},
+        next_pp = {lagr_partial_xpp(next_pt, pfac, next_shift), lagr_partial_zpp(next_pt, pfac, next_shift)};
 
-    union point *cur_pt = &d->points[1];
-    double pfac = pdata->rho / 2.0;
-    double cur_shift = pdata->shift[0] / pdata->rho;
-    double cur_part_xp = lagr_partial_xp(cur_pt, pfac, cur_shift);
-    double cur_part_zp = lagr_partial_zp(cur_pt, pfac, cur_shift);
+    for (size_t i = 1; i < POINTS-2; i++) {
+        v2d cur_part = {lagr_partial_x(cur_pt, pfac, cur_shift), lagr_partial_z(cur_pt, pfac, cur_shift)};
+        grad[i-1] = cur_part - (next_p - prev_p) * POINTS / 2.0 + (prev_pp + next_pp - 2.0 * cur_pp) * POINTS * POINTS;
 
-    for (size_t i = 0; i < POINTS-3; i++) {
-        union point *next_pt = &d->points[i+2];
-        double next_shift = pdata->shift[i+1] / pdata->rho;
-        double next_part_xp = lagr_partial_xp(next_pt, pfac, next_shift),
-               next_part_zp = lagr_partial_zp(next_pt, pfac, next_shift);
-        delta[i][0] = lagr_partial_x(cur_pt, pfac, cur_shift) - (next_part_xp - cur_part_xp) * POINTS;
-        delta[i][1] = lagr_partial_z(cur_pt, pfac, cur_shift) - (next_part_zp - cur_part_zp) * POINTS;
+        prev_pt = cur_pt;
         cur_pt = next_pt;
-        cur_part_xp = next_part_xp;
-        cur_part_zp = next_part_zp;
+        next_pt = &d->points[i+2];
+
+        prev_shift = cur_shift;
         cur_shift = next_shift;
+        next_shift = pdata->shift[i+2];
+
+        prev_p = cur_p;
+        cur_p = next_p;
+        next_p = v2d_of(lagr_partial_xp(next_pt, pfac, next_shift), lagr_partial_zp(next_pt, pfac, next_shift));
+
+        prev_pp = cur_pp;
+        cur_pp = next_pp;
+        next_pp = v2d_of(lagr_partial_xpp(next_pt, pfac, next_shift), lagr_partial_zpp(next_pt, pfac, next_shift));
     }
 
-    union point *next_pt = &d->points[POINTS-1];
-    double next_shift = pdata->shift[POINTS-3] / pdata->rho;
-    double next_part_xp = lagr_partial_xp(next_pt, pfac, next_shift),
-            next_part_zp = lagr_partial_zp(next_pt, pfac, next_shift);
-    delta[POINTS-3][0] = lagr_partial_x(cur_pt, pfac, cur_shift) - (next_part_xp - cur_part_xp) * POINTS;
-    delta[POINTS-3][1] = lagr_partial_z(cur_pt, pfac, cur_shift) - (next_part_zp - cur_part_zp) * POINTS;
+    v2d cur_part = {lagr_partial_x(cur_pt, pfac, cur_shift), lagr_partial_z(cur_pt, pfac, cur_shift)};
+    grad[POINTS-3] = cur_part - (next_p - prev_p) * POINTS / 2.0 + (prev_pp + next_pp - 2.0 * cur_pp) * POINTS * POINTS;
 }
 
 void renormalize(struct data *d, v2d *renorm_w) {
@@ -211,7 +222,7 @@ void optimize_unconstrained(
 
         recompute_dependent(d);
 
-        obj = compute_obj_and_constraint_info(d, pdata);
+        obj = objective(d, pdata);
 
         if (obj < best_obj) {
             iters_since_last_best = 0;
@@ -271,34 +282,39 @@ int main(void) {
     struct history hist = init_history(1000);
 
     struct penalty_data pdata = {};
-    double rho = 100.0;
+    double rho = 10.0;
     double eps = 1.0;
     double prev_v_norm;
     char first = 1;
 
     printf("Starting with rho = %f, eps = %f\n", rho, eps);
 
-    while (rho < 10000.0) {
+    while (rho < 1000000.0) {
         pdata.rho = rho;
-        optimize_unconstrained(&d, &pdata, &hist, hitboxes, eps, INT_MAX, 30000);
+        optimize_unconstrained(&d, &pdata, &hist, hitboxes, eps, INT_MAX, 20000);
 
         double v_norm = 0.0;
-        for (size_t i = 0; i < POINTS-2; i++) {
-            v_norm += fabs(fmin(-d.constraint[i], pdata.shift[i] / rho));
-            pdata.shift[i] = fmin(fmax(pdata.shift[i] + rho * d.constraint[i], 0), MAX_SHIFT);
+        for (size_t i = 1; i < POINTS-1; i++) {
+            v_norm += fabs(fmin(-d.constraint[i-1], pdata.shift[i] / rho));
+            pdata.shift[i] = fmin(fmax(pdata.shift[i] + rho * d.constraint[i-1], 0), MAX_SHIFT);
         }
+        pdata.shift[0] = pdata.shift[POINTS-1] = 0.0;
 
         if (first) {
             first = 0;
         } else if (v_norm > MIN_CONSTRAINT_PROGRESS * prev_v_norm) {
             puts("Not enough constraint progress");
             rho *= CONSTRAINT_UPSCALE;
-            eps *= EPS_DOWNSCALE;
+            eps *= 1.0;
             printf("Rho: %f, eps: %f\n", rho, eps);
         }
         prev_v_norm = v_norm;
     }
 
+    puts("Done with opts, smoothing out");
+    
+    smooth_out(&d);
+    
     puts("Writing to file...");
 
     FILE *f = fopen("path.txt", "w");

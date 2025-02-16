@@ -17,7 +17,7 @@ union point {
 };
 
 struct penalty_data {
-    double shift[POINTS-2];
+    double shift[POINTS];
     double rho;
 };
 
