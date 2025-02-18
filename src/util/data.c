@@ -20,28 +20,6 @@ void update_and_apply_momentum(
     }
 }
 
-double objective(struct data *d, struct penalty_data *pdata) {
-    double pfac = pdata->rho / 2.0;
-    double sum = 0.0;
-    for (size_t i = 1; i < POINTS-1; i++) {
-        sum += compute_lagrangian(&d->points[i], pfac, pdata->shift[i] / pdata->rho);
-    }
-    return sum / (POINTS-1);
-}
-
-double compute_obj_and_constraint_info(struct data *d, struct penalty_data *pdata) {
-    double sum = 0.0;
-    for (size_t i = 1; i < POINTS-1; i++) {
-        double lagr;
-        compute_lagrangian_and_constraint(
-            &d->points[i], pdata->rho / 2.0, pdata->shift[i-1] / pdata->rho,
-            &lagr, &d->constraint[i-1]
-        );
-        sum += lagr;
-    }
-    return sum / (POINTS-1);
-}
-
 void recompute_dependent(struct data *d) {
     v2d prev_pos = d->points[0].pos,
         cur_pos = d->points[1].pos,

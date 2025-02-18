@@ -386,3 +386,33 @@ double theta(v2d pos, v2d vel) {
     double det = fac * (whirl_x_no_fac * zp - whirl_z_no_fac * xp);
     return acos(det) - atan2(zp, xp);
 }
+
+double total_time_taken(struct data *d) {
+    double sum = 0.0;
+    for (size_t i = 1; i < POINTS-1; i++) {
+        sum += time_integrand_alone(d->points[i].pos, d->points[i].vel);
+    }
+    return sum / (POINTS-1);
+}
+
+double objective(struct data *d, struct penalty_data *pdata) {
+    double pfac = pdata->rho / 2.0;
+    double sum = 0.0;
+    for (size_t i = 1; i < POINTS-1; i++) {
+        sum += compute_lagrangian(&d->points[i], pfac, pdata->shift[i] / pdata->rho);
+    }
+    return sum / (POINTS-1);
+}
+
+double compute_obj_and_constraint_info(struct data *d, struct penalty_data *pdata) {
+    double sum = 0.0;
+    for (size_t i = 1; i < POINTS-1; i++) {
+        double lagr;
+        compute_lagrangian_and_constraint(
+            &d->points[i], pdata->rho / 2.0, pdata->shift[i-1] / pdata->rho,
+            &lagr, &d->constraint[i-1]
+        );
+        sum += lagr;
+    }
+    return sum / (POINTS-1);
+}

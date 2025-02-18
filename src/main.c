@@ -201,14 +201,15 @@ void optimize_unconstrained(
     v2d renorm_w[POINTS];
     v2d grad[POINTS-2];
 
-    double obj = compute_obj_and_constraint_info(d, pdata),
+    double obj = objective(d, pdata),
           best_obj = obj;
     size_t iters = 0;
     size_t iters_since_last_best = 0;
 
     while (iters <= max_iters && iters_since_last_best < max_iters_without_change) {
-        if (iters++ % MEM_STORE_RATE == 0) {
-            printf("%d: %f (current), %f (best)\n", iters, obj, best_obj);
+        iters++;
+
+        if (iters % MEM_STORE_RATE == 0) {
             store_into_history(d, hist);
         }
 
@@ -238,7 +239,7 @@ void optimize_unconstrained(
         obj = best_obj;
     }
 
-    printf("Optimized path down to %f after %d iterations.\n", obj, iters);
+    printf("Lagrangian: %f, rho: %f, eps: %f\n", obj, pdata->rho, eps);
 }
 
 int main(void) {
@@ -263,8 +264,8 @@ int main(void) {
     puts("Initializing hitboxes");
     struct hitbox hb[] = {
         {{0, 0}, 26},
-        {{1374, 948}, 150},
-        {{-1326, -1202}, 150},
+        //{{1374, 948}, 150},
+        //{{-1326, -1202}, 150},
         {{774, 23}, 150}
     };
 
@@ -280,6 +281,7 @@ int main(void) {
 
     puts("Starting optimization loops");
     struct history hist = init_history(1000);
+    store_into_history(&d, &hist);
 
     struct penalty_data pdata = {};
     double rho = 10.0;
@@ -291,7 +293,8 @@ int main(void) {
 
     while (rho < 1000000.0) {
         pdata.rho = rho;
-        optimize_unconstrained(&d, &pdata, &hist, hitboxes, eps, INT_MAX, 20000);
+        optimize_unconstrained(&d, &pdata, &hist, hitboxes, eps, INT_MAX, first ? 20000 : 100);
+        compute_obj_and_constraint_info(&d, &pdata);
 
         double v_norm = 0.0;
         for (size_t i = 1; i < POINTS-1; i++) {
@@ -303,17 +306,15 @@ int main(void) {
         if (first) {
             first = 0;
         } else if (v_norm > MIN_CONSTRAINT_PROGRESS * prev_v_norm) {
-            puts("Not enough constraint progress");
             rho *= CONSTRAINT_UPSCALE;
-            eps *= 1.0;
-            printf("Rho: %f, eps: %f\n", rho, eps);
+            eps *= EPS_DOWNSCALE;
+        } else if (v_norm < 1e-6) {
+            break;
         }
         prev_v_norm = v_norm;
     }
 
-    puts("Done with opts, smoothing out");
-    
-    smooth_out(&d);
+    printf("Final path time: %f\n", total_time_taken(&d));
     
     puts("Writing to file...");
 
@@ -338,7 +339,7 @@ int main(void) {
 
     fclose(f);
 
-    puts("Writing debug data...");
+    puts("Writing frame-sampled path...");
 
     compute_output_resampled(&d);
 

@@ -1,6 +1,9 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
+whirlpool_x = -3174.0
+whirlpool_z = 102.0
+
 def au_to_radians(a):
     return a / 65536 * 2 * np.pi
 
@@ -37,7 +40,7 @@ if __name__ == '__main__':
         f.readline()
         for ln in f:
             vals = ln.split(",")
-            yaw_path.append((float(vals[0]), float(vals[1]), au_to_radians(float(vals[2]))))
+            yaw_path.append((float(vals[0]) - whirlpool_x, float(vals[2]) - whirlpool_z, au_to_radians(float(vals[3]))))
 
     print("Done reading from files, plotting")
 

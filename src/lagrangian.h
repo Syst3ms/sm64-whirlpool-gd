@@ -20,3 +20,7 @@ void compute_lagrangian_and_constraint(
 double time_integrand_alone(v2d pos, v2d vel);
 double theta(v2d pos, v2d vel);
 double real_speed_norm(v2d pos, v2d vel);
+
+double total_time_taken(struct data *d);
+double objective(struct data *d, struct penalty_data *pdata);
+double compute_obj_and_constraint_info(struct data *d, struct penalty_data *pdata);
